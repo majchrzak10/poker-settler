@@ -1,131 +1,90 @@
 # Poker Settler
 
-Polskojęzyczna PWA do rozliczania gier pokerowych między znajomymi: buy-iny, cash-outy, minimalizacja przelewów, historia, konto w chmurze (Supabase).
+Aplikacja PWA do rozliczania pokerowych sesji ze znajomymi. Wpisz buy-iny, wpisz cash-outy — dostaniesz minimalną listę przelewów.
 
 ## Architektura
 
-- **Jeden plik frontendu:** [`index.html`](index.html) — React 18 (UMD production), Babel Standalone (JSX w przeglądarce), Tailwind CDN, Supabase JS v2.
-- **Backend:** Supabase (Auth + Postgres + opcjonalnie Realtime).
-- **Persystencja lokalna:** `localStorage` (offline / przed logowaniem).
-- **Persystencja chmurowa:** tabele `profiles`, `players`, `sessions`, `session_players`, `transfers`, `participations`, `live_session_state`.
+Cała aplikacja to **jeden plik `index.html`** — bez bundlera, bez npm.
 
-Szczegóły dla asystentów AI: [`CLAUDE.md`](CLAUDE.md).
+| Warstwa | Technologia |
+|---------|-------------|
+| UI | React 18 (CDN) + Babel Standalone (transpilacja JSX w przeglądarce) |
+| Styl | Tailwind CSS (CDN) |
+| Backend | Supabase (auth + PostgreSQL) |
+| Offline | localStorage (fallback gdy brak konta) |
 
-## Wymagania
-
-- Przeglądarka z JS.
-- Konto i projekt **Supabase** (URL + klucz publikowany w kliencie).
-- (Opcjonalnie) **Netlify** lub inny hosting statyczny.
+Kwoty w Supabase są przechowywane jako **centy (integer)**. UI pracuje na PLN (float) — przeliczenie przy zapisie/odczycie.
 
 ## Konfiguracja Supabase
 
-### 1. Migracje SQL — kolejność
+1. Utwórz projekt na [supabase.com](https://supabase.com).
+2. W `index.html` (linie 68–69) ustaw swoje dane:
+   ```js
+   const SUPABASE_URL = 'https://TWOJ_PROJEKT.supabase.co';
+   const SUPABASE_KEY = 'sb_publishable_...';  // anon/public key
+   ```
+3. Uruchom migracje w kolejności w **SQL Editor** (Supabase Dashboard):
+   ```
+   supabase/migrations/000_init.sql
+   supabase/migrations/001_participations.sql
+   supabase/migrations/002_rls.sql
+   ```
+4. Włącz Realtime dla tabel: `players`, `sessions`, `session_players`, `transfers`, `participations`
+   — Dashboard → Database → Replication → zaznacz tabele.
 
-Uruchamiaj w **Supabase → SQL → New query** w podanej kolejności:
+## Lokalny development
 
-| Kolejność | Plik | Opis |
-|-----------|------|------|
-| 1 | [`supabase/migrations/000_profiles_players_participations.sql`](supabase/migrations/000_profiles_players_participations.sql) | `profiles.email`, `players.linked_user_id`, tabela `participations` + RLS |
-| 2 | [`supabase/migrations/001_session_atomic.sql`](supabase/migrations/001_session_atomic.sql) | Funkcje `save_session_atomic` / `update_session_atomic` (transakcyjny zapis sesji) |
-| 3 | [`supabase/migrations/002_live_session_state.sql`](supabase/migrations/002_live_session_state.sql) | Tabela `live_session_state` — synchronizacja **aktywnej** (niezapisanej) sesji między urządzeniami |
-
-Jeśli polityka już istnieje (`policy already exists`), w pliku `000` są `DROP POLICY IF EXISTS` — możesz bezpiecznie ponowić fragment RLS.
-
-### 2. Realtime (zalecane)
-
-Aby odświeżanie między urządzeniami działało „na żywo”, w Supabase włącz replikację Realtime dla tabel używanych w kanale (min.):
-
-- `players`
-- `sessions`
-- `session_players`
-- `transfers`
-- `participations`
-- `live_session_state`
-
-**Database → Replication** (lub odpowiednik w panelu) — zaznacz te tabele.
-
-Bez Realtime aplikacja nadal działa, ale częściej polega na pollingu / focus.
-
-### 3. Klucze w `index.html`
-
-W [`index.html`](index.html) ustaw:
-
-- `SUPABASE_URL`
-- `SUPABASE_KEY` (klucz **publikowalny** / anon — zgodnie z polityką Supabase; bezpieczeństwo danych = **RLS**)
-
-## Uruchomienie lokalne
-
-1. Otwórz `index.html` w przeglądarce **lub** serwuj katalogiem statycznym, np.:
+Otwórz plik bezpośrednio w przeglądarce lub uruchom prosty serwer HTTP:
 
 ```bash
-cd "/Users/jan/Downloads/Poker cursor"
 python3 -m http.server 8080
+# → http://localhost:8080
 ```
 
-2. Wejdź na `http://localhost:8080`.
+Błędy JSX widać w konsoli przeglądarki (Babel transpiluje w runtime).
 
-## Wdrożenie (Netlify)
-
-1. **Publish directory:** katalog z `index.html` (np. root repo).
-2. **Build command:** puste (brak builda).
-3. Podłącz domenę w **Domain management** (np. `bioredlab.pl`).
-4. Po każdej zmianie wgraj nowy `index.html` lub zrób deploy z Gita.
-
-## Funkcje (skrót)
-
-- Logowanie / rejestracja (Supabase Auth).
-- Baza graczy, sesja (buy-iny), rozliczenie, zapis sesji.
-- Historia + ranking; edycja / usunięcie sesji (właściciel) z synchronizacją do chmury.
-- Połączenie gracza z kontem (email / UUID) → wpisy `participations` i współdzielony podgląd historii.
-- Kolejka nieudanych zapisów chmurowych + ponowienie + auto-retry.
-- Synchronizacja draftu sesji: `live_session_state` + Realtime.
-
-## Test smoke (po wdrożeniu)
-
-1. Rejestracja / logowanie.
-2. Dodanie gracza, sesja, rozliczenie, **zakończenie i zapis** — wiersze w `sessions` / `session_players`.
-3. **Profil** → synchronizacja bez błędu po zapisie.
-4. (Opcjonalnie) dwa urządzenia, to samo konto — zmiana aktywnej sesji widoczna na drugim (po migracji `002` i Realtime).
-
-## Struktura repozytorium
-
-```
-.
-├── index.html                      # cała aplikacja (React + logika)
-├── CLAUDE.md                       # notatki dla asystentów AI
-├── README.md                       # ten plik
-└── supabase/migrations/
-    ├── 000_profiles_players_participations.sql
-    ├── 001_session_atomic.sql
-    └── 002_live_session_state.sql
-```
-
-## Repozytorium na GitHubie
-
-Lokalnie (w tym katalogu):
+## Deploy (Netlify)
 
 ```bash
-cd "/Users/jan/Downloads/Poker cursor"
-git init
-git add .
-git commit -m "Initial commit: Poker Settler"
+# Przeciągnij katalog na netlify.com/drop
+# lub przez CLI:
+netlify deploy --prod --dir .
 ```
 
-Jeśli **GitHub CLI** (`gh`) jest zalogowany:
+Nie ma kroku budowania — deploy to po prostu opublikowanie `index.html`.
+
+## Smoke test po wdrożeniu
+
+1. Otwórz aplikację → ekran logowania powinien się pojawić.
+2. Utwórz konto → zaloguj się.
+3. Dodaj 2 graczy (zakładka **Gracze**).
+4. Przejdź do **Sesji**, ustaw buy-in, dodaj graczy.
+5. Przejdź do **Wyników**, wpisz cash-outy (suma = pula), kliknij **Oblicz**.
+6. Zapisz sesję → sprawdź zakładkę **Historia**.
+7. W Supabase Dashboard → Table Editor zweryfikuj wpisy w `sessions` i `transfers`.
+
+## Struktura katalogów
+
+```
+index.html                        ← cała aplikacja
+CLAUDE.md                         ← wskazówki dla Claude Code
+supabase/
+  migrations/
+    000_init.sql                  ← tabele bazowe
+    001_participations.sql        ← historia gier per użytkownik
+    002_rls.sql                   ← Row Level Security
+```
+
+## GitHub
 
 ```bash
 gh auth login -h github.com
 gh repo create poker-settler --public --source=. --remote=origin --push
 ```
 
-Bez `gh`: utwórz puste repo na GitHubie, potem:
+lub ręcznie:
 
 ```bash
-git remote add origin https://github.com/TWOJ_USER/poker-settler.git
-git branch -M main
+git remote add origin https://github.com/TWOJ_USER/NAZWA_REPO.git
 git push -u origin main
 ```
-
-## Licencja
-
-Ustal według własnych potrzeb (repo domyślnie bez licencji — dodaj plik `LICENSE` jeśli chcesz jawnie udostępniać kod).
