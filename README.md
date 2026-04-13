@@ -45,13 +45,27 @@ Błędy JSX widać w konsoli przeglądarki (Babel transpiluje w runtime).
 
 ## Deploy (Netlify)
 
+W repozytorium jest **`netlify.toml`** z `publish = "."` — katalog główny (m.in. `index.html`) trafia na hosting bez kroku build.
+
+### Netlify podpięte do GitHuba (zalecane)
+
+Po **Import from Git** każdy push na **`main`** zwykle uruchamia nowy deploy automatycznie.
+
+```bash
+git add -A
+git commit -m "Krótki opis zmian"
+git push origin main
+```
+
+### Inaczej
+
 ```bash
 # Przeciągnij katalog na netlify.com/drop
 # lub przez CLI:
 netlify deploy --prod --dir .
 ```
 
-Nie ma kroku budowania — deploy to po prostu opublikowanie `index.html`.
+Nie ma kroku budowania — deploy to po prostu opublikowanie plików statycznych.
 
 ## Smoke test po wdrożeniu
 
