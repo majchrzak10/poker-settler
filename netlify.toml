@@ -1,0 +1,3 @@
+# Statyczna PWA — brak kroku build; serwowany jest cały katalog (index.html).
+[build]
+  publish = "."
