@@ -25,9 +25,9 @@ Kwoty w Supabase są przechowywane jako **centy (integer)**. UI pracuje na PLN (
    ```
 3. Uruchom migracje w kolejności w **SQL Editor** (Supabase Dashboard):
    ```
-   supabase/migrations/000_init.sql
-   supabase/migrations/001_participations.sql
-   supabase/migrations/002_rls.sql
+   supabase/migrations/000_profiles_players_participations.sql
+   supabase/migrations/001_session_atomic.sql
+   supabase/migrations/002_live_session_state.sql
    ```
 4. Włącz Realtime dla tabel: `players`, `sessions`, `session_players`, `transfers`, `participations`
    — Dashboard → Database → Replication → zaznacz tabele.
@@ -70,9 +70,9 @@ index.html                        ← cała aplikacja
 CLAUDE.md                         ← wskazówki dla Claude Code
 supabase/
   migrations/
-    000_init.sql                  ← tabele bazowe
-    001_participations.sql        ← historia gier per użytkownik
-    002_rls.sql                   ← Row Level Security
+    000_profiles_players_participations.sql  ← tabele bazowe + RLS
+    001_session_atomic.sql                   ← funkcje SECURITY DEFINER dla atomowego zapisu sesji
+    002_live_session_state.sql               ← synchronizacja aktywnej sesji między urządzeniami
 ```
 
 ## GitHub
