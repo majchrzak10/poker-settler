@@ -19,7 +19,6 @@
   },
   "homepage": "https://github.com/majchrzak10/poker-settler#readme",
   "dependencies": {
-    "@supabase/ssr": "^0.10.2",
     "@supabase/supabase-js": "^2.103.0"
   }
 }
