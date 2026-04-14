@@ -1,33 +1,21 @@
-# Wdrożenie produkcyjne na Netlify po pushu na main.
-# Wymaga sekretów repozytorium: NETLIFY_AUTH_TOKEN, NETLIFY_SITE_ID
-# (Netlify → User settings → Applications → New access token; Site settings → Site details → API ID)
+# Opcjonalnie: ręczne wdrożenie z zakładki Actions → Run workflow.
+# Wymaga sekretów: NETLIFY_AUTH_TOKEN, NETLIFY_SITE_ID (Settings → Secrets → Actions).
 #
-# Jeśli w Netlify masz już „Continuous deployment” z GitHuba, NIE dodawaj tych sekretów
-# albo wyłącz wbudowane deploy z repo — inaczej każdy push zbuduje stronę dwukrotnie.
+# Standardowe podejście bez Actions: w Netlify „Add site → Import from Git” i wybierz to repo —
+# wtedy każdy push na main buduje stronę automatycznie (netlify.toml jest w katalogu głównym).
 
-name: Deploy to Netlify
+name: Deploy to Netlify (manual)
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
-
-concurrency:
-  group: netlify-${{ github.repository }}
-  cancel-in-progress: true
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install Netlify CLI
-        run: npm install -g netlify-cli
-
-      - name: Deploy production
-        run: netlify deploy --prod --dir . --message "${{ github.event.head_commit.message || github.run_id }}"
+      - uses: actions/checkout@v4
+      - run: npm install -g netlify-cli
+      - run: netlify deploy --prod --dir . --message "${{ github.sha }}"
         env:
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
           NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
