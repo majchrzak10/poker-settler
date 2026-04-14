@@ -119,10 +119,22 @@ function isRpcMissingError(err) {
   return err?.code === 'PGRST202' || err?.code === '42883' || /save_session_atomic|update_session_atomic|function.*does not exist/i.test(m);
 }
 
-/** Tabela live_session_state nie wdrożona (migracja 002) — PostgREST zwraca m.in. PGRST205. */
+/** Tabela live_session_state nie wdrożona (migracja 002) — PostgREST zwraca m.in. PGRST205; komunikat bywa obcięty („public.live…”). */
 function isMissingLiveSessionTableError(err) {
-  const m = (err?.message || '') + (err?.details || '');
-  return err?.code === 'PGRST205' || /live_session_state.*schema cache|Could not find the table.*live_session_state|relation.*live_session_state.*does not exist/i.test(m);
+  if (!err) return false;
+  const m = `${err.message || ''} ${err.details || ''} ${err.hint || ''}`;
+  if (err.code === 'PGRST205') return /live_session|public\.live|schema cache/i.test(m);
+  return /live_session_state|public\.live_session|Could not find the table|schema cache|does not exist/i.test(m) && /live_session|public\.live/i.test(m);
+}
+
+/** Czyści zapisany w LS błąd sync (stary komunikat o braku tabeli live_session). */
+function sanitizeSyncMeta(meta) {
+  if (!meta?.lastError) return meta;
+  const e = meta.lastError;
+  if (/PGRST205|schema cache|Could not find the table/i.test(e) && /live_session|public\.live\b/i.test(e)) {
+    return { ...meta, lastError: null };
+  }
+  return meta;
 }
 
 const { useState, useEffect } = React;
@@ -1674,7 +1686,8 @@ function App() {
   const [saveStatus, setSaveStatus] = useState(null);
   const [failedCloudSaves, setFailedCloudSaves] = useState(() => loadLS(FAILED_CLOUD_SAVES_KEY, []));
   const [retryingFailedSaves, setRetryingFailedSaves] = useState(false);
-  const [syncMeta, setSyncMeta] = useState(() => loadLS(SYNC_META_KEY, { lastAttempt: null, lastSuccess: null, lastError: null }));
+  const [syncMeta, setSyncMeta] = useState(() => sanitizeSyncMeta(loadLS(SYNC_META_KEY, { lastAttempt: null, lastSuccess: null, lastError: null })));
+  const [skipLiveSessionCloud, setSkipLiveSessionCloud] = useState(false);
   const [cloudBanner, setCloudBanner] = useState(null);
   const [onboardingOpen, setOnboardingOpen] = useState(() => !loadLS(ONBOARDING_KEY, false));
   const applyingRemoteSessionRef = React.useRef(false);
@@ -1720,22 +1733,34 @@ function App() {
 
   useEffect(() => {
     lastMergedLiveUpdatedAtRef.current = null;
+    setSkipLiveSessionCloud(false);
   }, [user?.id]);
 
   const refreshCloudData = React.useCallback(async () => {
     if (!user) return;
-    const [playersRes, sessionsRes, sharedRes, liveRes] = await Promise.all([
+    const [playersRes, sessionsRes, sharedRes] = await Promise.all([
       supabase.from('players').select('*').eq('owner_id', user.id).order('created_at'),
       supabase.from('sessions').select('id, played_at, total_pot, session_players(player_id, player_name, total_buy_in, cash_out, net_balance), transfers(from_name, to_name, amount)').eq('owner_id', user.id).order('played_at'),
       supabase.from('participations').select('*').eq('user_id', user.id).order('session_date'),
-      supabase.from('live_session_state').select('default_buy_in, session_players, updated_at').eq('owner_id', user.id).maybeSingle(),
     ]);
+    let liveRes = { data: null, error: null };
+    if (!skipLiveSessionCloud) {
+      liveRes = await supabase.from('live_session_state').select('default_buy_in, session_players, updated_at').eq('owner_id', user.id).maybeSingle();
+      if (liveRes.error) {
+        if (isMissingLiveSessionTableError(liveRes.error)) {
+          setSkipLiveSessionCloud(true);
+          setSyncMeta(prev => ({ ...prev, lastError: null }));
+          liveRes = { data: null, error: null };
+        } else {
+          console.warn('refreshCloudData live_session_state', liveRes.error);
+        }
+      }
+    }
     if (playersRes.error || sessionsRes.error) {
       console.warn('refreshCloudData players/sessions', playersRes.error, sessionsRes.error);
       return;
     }
     if (sharedRes.error) console.warn('refreshCloudData participations', sharedRes.error);
-    if (liveRes.error) console.warn('refreshCloudData live_session_state', liveRes.error);
 
     const pData = playersRes.data;
     const sData = sessionsRes.data;
@@ -1791,7 +1816,18 @@ function App() {
         }
       }
     }
-  }, [user?.id]);
+  }, [user?.id, skipLiveSessionCloud]);
+
+  useEffect(() => {
+    if (!user || !skipLiveSessionCloud) return;
+    const probe = async () => {
+      const { error } = await supabase.from('live_session_state').select('owner_id').eq('owner_id', user.id).limit(1).maybeSingle();
+      if (!error) setSkipLiveSessionCloud(false);
+    };
+    const soon = setTimeout(probe, 4000);
+    const id = setInterval(probe, 90000);
+    return () => { clearTimeout(soon); clearInterval(id); };
+  }, [user?.id, skipLiveSessionCloud]);
 
   useEffect(() => {
     refreshCloudData();
@@ -1813,10 +1849,13 @@ function App() {
         }
       }, 300);
     };
-    const channel = supabase.channel(`sync-${user.id}`)
+    let channel = supabase.channel(`sync-${user.id}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'players', filter: `owner_id=eq.${user.id}` }, scheduleRefresh)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'sessions', filter: `owner_id=eq.${user.id}` }, scheduleRefresh)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'live_session_state', filter: `owner_id=eq.${user.id}` }, scheduleRefresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'sessions', filter: `owner_id=eq.${user.id}` }, scheduleRefresh);
+    if (!skipLiveSessionCloud) {
+      channel = channel.on('postgres_changes', { event: '*', schema: 'public', table: 'live_session_state', filter: `owner_id=eq.${user.id}` }, scheduleRefresh);
+    }
+    channel = channel
       .on('postgres_changes', { event: '*', schema: 'public', table: 'participations', filter: `user_id=eq.${user.id}` }, scheduleRefresh)
       .subscribe();
 
@@ -1836,7 +1875,7 @@ function App() {
       window.removeEventListener('online', onOnline);
       supabase.removeChannel(channel);
     };
-  }, [user?.id, refreshCloudData]);
+  }, [user?.id, refreshCloudData, skipLiveSessionCloud]);
   const combinedHistory = React.useMemo(
     () => [...history, ...sharedHistory].sort((a, b) => new Date(a.date) - new Date(b.date)),
     [history, sharedHistory]
@@ -1934,7 +1973,7 @@ function App() {
   }, [user?.id, failedCloudSaves.length]);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user || skipLiveSessionCloud) return;
     if (applyingRemoteSessionRef.current) {
       applyingRemoteSessionRef.current = false;
       return;
@@ -1951,6 +1990,7 @@ function App() {
       const { error } = await supabase.from('live_session_state').upsert(payload, { onConflict: 'owner_id' });
       if (error) {
         if (isMissingLiveSessionTableError(error)) {
+          setSkipLiveSessionCloud(true);
           setSyncMeta(prev => ({ ...prev, lastError: null }));
           console.warn('Supabase: brak tabeli live_session_state. W Dashboard → SQL uruchom plik supabase/migrations/002_live_session_state.sql');
         } else {
@@ -1963,7 +2003,7 @@ function App() {
       }
     }, 350);
     return () => clearTimeout(timer);
-  }, [user?.id, defaultBuyIn, sessionPlayers]);
+  }, [user?.id, defaultBuyIn, sessionPlayers, skipLiveSessionCloud]);
 
   const playerById = React.useMemo(
     () => Object.fromEntries(players.map(p => [p.id, p])),
