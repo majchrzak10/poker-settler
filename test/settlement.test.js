@@ -1,6 +1,10 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { plnToCents, settleDebts, pluralPL } = require('../lib/settlement.js');
+const { plnToCents, settleDebts, pluralPL, formatPln } = require('../lib/settlement.js');
+
+test('formatPln uses pl locale', () => {
+  assert.match(formatPln(1234.5), /1[\s\u00a0]?234/);
+});
 
 test('plnToCents rounds to integer grosze', () => {
   assert.equal(plnToCents(10.5), 1050);

@@ -69,6 +69,10 @@
     input[type=number]::-webkit-inner-spin-button,
     input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
     input[type=number] { -moz-appearance: textfield; appearance: textfield; }
+    .main-scroll-pad { padding-bottom: calc(6.5rem + env(safe-area-inset-bottom, 0px)); }
+    .nav-safe { padding-bottom: env(safe-area-inset-bottom, 0px); }
+    button:focus-visible, a:focus-visible { outline: 2px solid rgba(225, 29, 72, 0.65); outline-offset: 2px; }
+    button:focus:not(:focus-visible) { outline: none; }
   </style>
 </head>
 <body>
@@ -80,7 +84,7 @@ const SUPABASE_KEY = 'sb_publishable_FHu3tWQSK9vt6XJGL3e7Vw_vPm5udfA';
 const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const FAILED_CLOUD_SAVES_KEY = 'poker_failed_cloud_saves';
 const SYNC_META_KEY = 'poker_sync_meta';
-const { plnToCents, settleDebts, pluralPL } = window.PokerSettlerCore;
+const { plnToCents, settleDebts, pluralPL, formatPln } = window.PokerSettlerCore;
 
 function buildSessionRpcArgs(sessionRow, sessionPlayersRows, transferRows, participationRows) {
   return {
@@ -513,8 +517,8 @@ function PlayersTab({ players, sessionPlayers, onAddPlayer, onUpdatePlayer, onRe
   return (
     <div className="p-4 space-y-5">
       <div>
-        <h2 className="text-sm font-semibold uppercase tracking-wider text-green-200/60">Baza Graczy</h2>
-        <p className="text-xs text-green-200/40 mt-0.5">{players.length} zapisanych</p>
+        <h2 className="text-lg font-bold text-white tracking-tight">Gracze</h2>
+        <p className="text-xs text-green-200/55 mt-0.5">{players.length} zapisanych · baza na kolejne sesje</p>
       </div>
 
       <form onSubmit={handleSubmit} className="bg-black/30 rounded-2xl p-4 border border-green-900 space-y-3">
@@ -535,7 +539,7 @@ function PlayersTab({ players, sessionPlayers, onAddPlayer, onUpdatePlayer, onRe
         {players.length === 0 ? (
           <div className="text-center py-12 bg-black/20 rounded-2xl border border-dashed border-green-900">
             <p className="text-green-200/50 text-sm">Brak graczy.</p>
-            <p className="text-green-200/30 text-xs mt-1">Dodaj stałych bywalców powyżej.</p>
+            <p className="text-green-200/45 text-xs mt-1">Dodaj stałych bywalców powyżej.</p>
           </div>
         ) : players.map(p => {
           const inSession = sessionPlayers.some(sp => sp.playerId === p.id);
@@ -654,10 +658,14 @@ function SessionTab({ players, sessionPlayers, defaultBuyIn, totalPot, onDefault
 
   return (
     <div className="p-4 space-y-4">
+      <div className="px-1">
+        <h2 className="text-lg font-bold text-white tracking-tight">Sesja</h2>
+        <p className="text-xs text-green-200/55 mt-0.5">Buy-iny i skład przy stole</p>
+      </div>
       <div className="bg-gradient-to-br from-green-900/60 to-black/60 border border-green-800/60 rounded-2xl p-4 flex items-center justify-between">
         <div>
           <p className="text-xs text-green-200/60 uppercase tracking-wider font-medium">Total Pot</p>
-          <p className="text-3xl font-bold text-white mt-1">{totalPot} <span className="text-base text-green-200/50 font-normal">PLN</span></p>
+          <p className="text-3xl font-bold text-white mt-1 tabular-nums">{formatPln(totalPot)} <span className="text-base text-green-200/55 font-normal">PLN</span></p>
         </div>
         <div className="text-right">
           <p className="text-2xl font-bold text-yellow-400">{sessionPlayers.length}</p>
@@ -679,7 +687,7 @@ function SessionTab({ players, sessionPlayers, defaultBuyIn, totalPot, onDefault
         {sessionPlayers.length === 0 ? (
           <div className="text-center py-10 bg-black/20 rounded-2xl border border-dashed border-green-900">
             <p className="text-green-200/50 text-sm">Brak graczy w sesji.</p>
-            <p className="text-green-200/30 text-xs mt-1">Dodaj graczy z listy poniżej.</p>
+            <p className="text-green-200/45 text-xs mt-1">Dodaj graczy z listy poniżej.</p>
           </div>
         ) : sessionPlayers.map(sp => {
           const player = players.find(p => p.id === sp.playerId);
@@ -711,7 +719,7 @@ function SessionTab({ players, sessionPlayers, defaultBuyIn, totalPot, onDefault
                   <p className="font-bold text-white leading-tight">
                     {sp.buyIns.length}<span className="text-green-200/50 font-normal">×</span> <span className="text-yellow-400">{defaultBuyIn}</span> <span className="text-green-200/50 text-sm font-normal">PLN</span>
                   </p>
-                  <p className="text-xs text-green-200/40 mt-0.5">= {total} PLN łącznie</p>
+                  <p className="text-xs text-green-200/55 mt-0.5">= {formatPln(total)} PLN łącznie</p>
                 </div>
                 <button onClick={() => onAddBuyIn(sp.playerId)}
                   className="w-16 flex items-center justify-center bg-rose-800 hover:bg-rose-900 text-white transition-colors">
@@ -787,7 +795,7 @@ function SettlementTab({ players, sessionPlayers, transactions, settled, totalPo
     const transferLines = transactions.length === 0
       ? ['  Nikt nikomu nie jest winien!']
       : transactions.map(t => `  ${t.from} → ${t.to}: ${t.amount} PLN${t.toPhone ? ` (Tel: ${t.toPhone})` : ''}`);
-    const report = [`♠ Rozliczenie Poker — ${date}`, `Pula: ${totalPot} PLN`, '', 'Wyniki:', ...results, '', 'Przelewy:', ...transferLines].join('\n');
+    const report = [`♠ Rozliczenie Poker — ${date}`, `Pula: ${formatPln(totalPot)} PLN`, '', 'Wyniki:', ...results, '', 'Przelewy:', ...transferLines].join('\n');
     try {
       await navigator.clipboard.writeText(report);
       setCopied(true);
@@ -798,37 +806,44 @@ function SettlementTab({ players, sessionPlayers, transactions, settled, totalPo
   if (sessionPlayers.length === 0) return (
     <div className="flex flex-col items-center justify-center min-h-[60vh] text-center p-8">
       <p className="text-green-200/50 text-sm">Brak aktywnej sesji.</p>
-      <p className="text-green-200/30 text-xs mt-1">Dodaj graczy w zakładce Sesja.</p>
+      <p className="text-green-200/45 text-xs mt-1">Dodaj graczy w zakładce Sesja.</p>
     </div>
   );
 
   return (
     <div className="p-4 space-y-5">
+      <div className="px-1">
+        <h2 className="text-lg font-bold text-white tracking-tight">Wyniki</h2>
+        <p className="text-xs text-green-200/55 mt-0.5">Cash-outy i minimalna lista przelewów</p>
+      </div>
       <div className={`rounded-2xl border p-4 transition-colors ${isBalanced ? 'bg-emerald-900/20 border-emerald-800' : allFilled ? 'bg-red-900/20 border-red-800/60' : 'bg-black/30 border-green-900'}`}>
         <div className="flex justify-between items-center mb-3">
           <span className="text-xs text-green-200/60 uppercase tracking-wider font-medium">Bilans</span>
           {isBalanced ? (
             <span className="flex items-center gap-1 text-xs text-emerald-400 font-semibold"><IconCheck size={12} /> Zbilansowane</span>
           ) : allFilled ? (
-            <span className="text-xs text-rose-400 font-semibold">{diff > 0 ? `Brakuje ${diff.toFixed(0)} PLN` : `Nadwyżka ${Math.abs(diff).toFixed(0)} PLN`}</span>
+            <span className="text-xs text-rose-400 font-semibold tabular-nums">{diff > 0 ? `Brakuje ${formatPln(diff)} PLN` : `Nadwyżka ${formatPln(Math.abs(diff))} PLN`}</span>
           ) : (
-            <span className="text-xs text-green-200/40">Uzupełnij cash-outy</span>
+            <span className="text-xs text-green-200/55">Uzupełnij cash-outy</span>
           )}
         </div>
         <div className="flex items-end gap-3 text-sm mb-3">
           <div className="flex-1">
-            <p className="text-xs text-green-200/40 mb-0.5">Buy-iny</p>
-            <p className="text-xl font-bold text-white">{totalPot} PLN</p>
+            <p className="text-xs text-green-200/55 mb-0.5">Buy-iny (pula)</p>
+            <p className="text-xl font-bold text-white tabular-nums">{formatPln(totalPot)} PLN</p>
           </div>
           <div className="text-green-700 pb-1 text-xs">vs</div>
           <div className="flex-1 text-right">
-            <p className="text-xs text-green-200/40 mb-0.5">Cash-outy</p>
-            <p className={`text-xl font-bold ${isBalanced ? 'text-emerald-400' : allFilled ? 'text-rose-400' : 'text-white'}`}>{totalCashOut} PLN</p>
+            <p className="text-xs text-green-200/55 mb-0.5">Cash-outy</p>
+            <p className={`text-xl font-bold tabular-nums ${isBalanced ? 'text-emerald-400' : allFilled ? 'text-rose-400' : 'text-white'}`}>{formatPln(totalCashOut)} PLN</p>
           </div>
         </div>
         <div className="w-full bg-black/40 rounded-full h-1.5 overflow-hidden">
           <div className={`h-full rounded-full transition-all duration-300 ${isBalanced ? 'bg-emerald-500' : 'bg-red-500'}`} style={{ width: `${progress}%` }} />
         </div>
+        <p className="text-[11px] text-green-200/55 mt-2 leading-snug">
+          Suma wpisanych cash-outów powinna być równa sumie buy-inów (puli). Różnica = błąd lub brakująca gotówka przy stole.
+        </p>
       </div>
 
       <div className="space-y-2">
@@ -847,11 +862,11 @@ function SettlementTab({ players, sessionPlayers, transactions, settled, totalPo
                 </div>
                 <div className="flex-1">
                   <p className="text-sm font-semibold text-white">{player.name}</p>
-                  <p className="text-xs text-green-300/60">Buy-in: {buyInTotal} PLN</p>
+                  <p className="text-xs text-green-300/65">Buy-in: {formatPln(buyInTotal)} PLN</p>
                 </div>
                 {net !== null && (
-                  <div className={`text-sm font-bold ${net >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                    {net >= 0 ? '+' : ''}{net.toFixed(0)} PLN
+                  <div className={`text-sm font-bold tabular-nums ${net >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                    {net >= 0 ? '+' : ''}{formatPln(net)} PLN
                   </div>
                 )}
               </div>
@@ -887,7 +902,7 @@ function SettlementTab({ players, sessionPlayers, transactions, settled, totalPo
                 <span className="font-semibold text-white text-sm">{t.to}</span>
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-2xl font-bold text-yellow-400">{t.amount} PLN</span>
+                <span className="text-2xl font-bold text-yellow-400 tabular-nums">{formatPln(t.amount)} PLN</span>
                 {t.toPhone && (
                   <a href={`tel:${t.toPhone.replace(/\s/g, '')}`}
                     className="flex items-center gap-1.5 text-xs text-green-200 bg-black/40 border border-green-800 hover:bg-black/60 px-3 py-1.5 rounded-lg transition-colors">
@@ -955,9 +970,9 @@ function recalculateSession(session, updatedPlayers) {
 }
 
 function NetBadge({ value }) {
-  if (value > 0) return <span className="font-bold text-green-500">+{value} PLN</span>;
-  if (value < 0) return <span className="font-bold text-red-500">{value} PLN</span>;
-  return <span className="font-bold text-green-200/40">0 PLN</span>;
+  if (value > 0) return <span className="font-bold text-green-500">+{formatPln(value)} PLN</span>;
+  if (value < 0) return <span className="font-bold text-red-500">−{formatPln(-value)} PLN</span>;
+  return <span className="font-bold text-green-200/55">0 PLN</span>;
 }
 
 const MEDALS = ['🥇', '🥈', '🥉'];
@@ -1024,7 +1039,7 @@ function HistoryTab({ history, onUpdateSession, onDeleteSession, failedSyncCount
     const transferLines = session.transfers.length > 0
       ? session.transfers.map(t => `• ${t.from} ➜ ${t.to}: *${t.amount} PLN*${t.toPhone ? `  📱 ${t.toPhone}` : ''}`)
       : ['✅ Brak przelewów — wszyscy wyszli na zero!'];
-    const text = [`♠️ *Poker Night — ${date}*`, `💰 *Pula: ${session.totalPot} PLN*`, '', '📊 *Wyniki:*', ...playerLines, '', '💸 *Przelewy:*', ...transferLines].join('\n');
+    const text = [`♠️ *Poker Night — ${date}*`, `💰 *Pula: ${formatPln(session.totalPot)} PLN*`, '', '📊 *Wyniki:*', ...playerLines, '', '💸 *Przelewy:*', ...transferLines].join('\n');
     if (navigator.share) { try { await navigator.share({ text }); return; } catch {} }
     try {
       await navigator.clipboard.writeText(text);
@@ -1049,8 +1064,8 @@ function HistoryTab({ history, onUpdateSession, onDeleteSession, failedSyncCount
         </div>
       )}
       <div>
-        <h2 className="text-sm font-semibold uppercase tracking-wider text-green-200/60">Historia i Statystyki</h2>
-        <p className="text-xs text-green-200/40 mt-0.5">{history.length} {pluralPL(history.length, 'sesja', 'sesje', 'sesji')} w archiwum · ranking z pełnych sesji u Ciebie</p>
+        <h2 className="text-lg font-bold text-white tracking-tight">Historia</h2>
+        <p className="text-xs text-green-200/55 mt-0.5">{history.length} {pluralPL(history.length, 'sesja', 'sesje', 'sesji')} w archiwum · ranking z pełnych sesji u Ciebie</p>
       </div>
 
       <div className="flex bg-black/30 border border-green-900 rounded-xl p-1 gap-1">
@@ -1129,7 +1144,7 @@ function HistoryTab({ history, onUpdateSession, onDeleteSession, failedSyncCount
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-semibold text-white truncate">{formatDate(session.date)}</p>
                       <p className="text-xs text-green-200/50 mt-0.5">
-                        Pula: <span className="text-yellow-400 font-semibold">{session.totalPot} PLN</span> · {session.players.length} graczy
+                        Pula: <span className="text-yellow-400 font-semibold tabular-nums">{formatPln(session.totalPot)} PLN</span> · {session.players.length} graczy
                       </p>
                       {isPendingSync && <p className="text-[11px] text-yellow-300 mt-0.5">Oczekuje na zapis do chmury</p>}
                       {isShared && (
@@ -1235,7 +1250,7 @@ function HistoryTab({ history, onUpdateSession, onDeleteSession, failedSyncCount
                               </div>
                               <div className="text-right">
                                 <NetBadge value={p.netBalance} />
-                                <p className="text-xs text-green-200/40">{p.totalBuyIn} → {p.cashOut} PLN</p>
+                                <p className="text-xs text-green-200/55 tabular-nums">{formatPln(p.totalBuyIn)} → {formatPln(p.cashOut)} PLN</p>
                               </div>
                             </div>
                           ))}
@@ -1255,7 +1270,7 @@ function HistoryTab({ history, onUpdateSession, onDeleteSession, failedSyncCount
                                   <span className="truncate max-w-[80px]">{t.to}</span>
                                 </div>
                                 <div className="flex items-center gap-2 shrink-0">
-                                  <span className="text-yellow-400 font-semibold text-sm">{t.amount} PLN</span>
+                                  <span className="text-yellow-400 font-semibold text-sm tabular-nums">{formatPln(t.amount)} PLN</span>
                                   {t.toPhone && (
                                     <a href={`tel:${t.toPhone.replace(/\s/g, '')}`} className="text-green-200/60 hover:text-green-200 transition-colors">
                                       <IconPhone />
@@ -1292,6 +1307,7 @@ function HistoryTab({ history, onUpdateSession, onDeleteSession, failedSyncCount
 function ProfileView({ user, history, players, onUnlinkPlayer, onSignOut, syncMeta, onRetrySyncFailed, retryingFailedSaves, failedCloudSavesCount }) {
   const [profile, setProfile] = useState(null);
   const [migrateLoading, setMigrateLoading] = useState(false);
+  const [migrateError, setMigrateError] = useState('');
   const [migrateDone, setMigrateDone] = useState(false);
   const [editingName, setEditingName] = useState(false);
   const [draftName, setDraftName] = useState('');
@@ -1376,6 +1392,7 @@ function ProfileView({ user, history, players, onUnlinkPlayer, onSignOut, syncMe
 
   const handleMigrate = async () => {
     setMigrateLoading(true);
+    setMigrateError('');
     try {
       const localPlayers = loadLS('poker_players', []);
       const localHistory = loadLS('poker_sessions_history', []);
@@ -1428,14 +1445,18 @@ function ProfileView({ user, history, players, onUnlinkPlayer, onSignOut, syncMe
       setMigrateDone(true);
       window.location.reload();
     } catch (e) {
-      alert(`Błąd migracji: ${e?.message || 'spróbuj ponownie'}`);
+      setMigrateError(e?.message || 'Nie udało się zaimportować. Spróbuj ponownie.');
     } finally {
       setMigrateLoading(false);
     }
   };
 
   return (
-    <div className="p-4 space-y-5 pb-28">
+    <div className="p-4 space-y-5 pb-6">
+      <div className="px-1">
+        <h2 className="text-lg font-bold text-white tracking-tight">Profil</h2>
+        <p className="text-xs text-green-200/55 mt-0.5">Konto, import danych i synchronizacja</p>
+      </div>
       <div className="bg-black/30 border border-green-900 rounded-2xl p-4 space-y-3">
         <div className="flex items-center gap-4">
           <div className="w-14 h-14 rounded-full bg-rose-800 flex items-center justify-center text-2xl font-bold text-white shrink-0">
@@ -1492,11 +1513,12 @@ function ProfileView({ user, history, players, onUnlinkPlayer, onSignOut, syncMe
             className="w-full bg-yellow-700 hover:bg-yellow-800 disabled:opacity-50 rounded-xl py-2.5 text-sm font-semibold transition-colors">
             {migrateLoading ? 'Importowanie...' : 'Importuj do chmury'}
           </button>
+          {migrateError && <p className="text-xs text-rose-400">{migrateError}</p>}
         </div>
       )}
 
       <div className="bg-black/30 border border-green-900 rounded-2xl p-4 space-y-2">
-        <h2 className="text-sm font-semibold uppercase tracking-wider text-green-200/60">Synchronizacja z chmurą</h2>
+        <h2 className="text-base font-bold text-white">Synchronizacja z chmurą</h2>
         <p className="text-xs text-green-200/50">
           Ostatnia próba: {syncMeta?.lastAttempt ? formatDate(syncMeta.lastAttempt) : '—'} · Ostatni sukces: {syncMeta?.lastSuccess ? formatDate(syncMeta.lastSuccess) : '—'}
         </p>
@@ -1579,11 +1601,11 @@ function ProfileView({ user, history, players, onUnlinkPlayer, onSignOut, syncMe
       </div>
 
       <div>
-        <h2 className="text-sm font-semibold uppercase tracking-wider text-green-200/60 mb-3">Moje gry ({myGames.length})</h2>
+        <h2 className="text-lg font-bold text-white tracking-tight mb-3">Moje gry ({myGames.length})</h2>
         {myGames.length === 0 ? (
           <div className="text-center py-10 bg-black/20 rounded-2xl border border-dashed border-green-900">
             <p className="text-green-200/50 text-sm">Brak gier.</p>
-            <p className="text-green-200/30 text-xs mt-1">Organizator musi połączyć Cię z kontem.</p>
+            <p className="text-green-200/45 text-xs mt-1">Organizator musi połączyć Cię z kontem.</p>
           </div>
         ) : myGames.map(g => {
           const net = g.net_balance != null ? g.net_balance / 100 : null;
@@ -1594,9 +1616,9 @@ function ProfileView({ user, history, players, onUnlinkPlayer, onSignOut, syncMe
             <div key={g.id} className="bg-black/30 border border-green-900 rounded-2xl px-4 py-3 flex items-center gap-3 mb-2">
               <div className="flex-1 min-w-0">
                 <p className="font-semibold text-white text-sm">{date}</p>
-                <p className="text-xs text-green-200/40">Pula: <span className="text-yellow-400">{g.total_pot / 100} PLN</span> · Buy-in: {buyIn} PLN</p>
+                <p className="text-xs text-green-200/55 tabular-nums">Pula: <span className="text-yellow-400">{formatPln(g.total_pot / 100)} PLN</span> · Buy-in: {formatPln(buyIn)} PLN</p>
               </div>
-              {net != null ? <NetBadge value={net} /> : <span className="text-xs text-green-200/40">–</span>}
+              {net != null ? <NetBadge value={net} /> : <span className="text-xs text-green-200/55">–</span>}
             </div>
           );
         })}
@@ -1608,12 +1630,22 @@ function ProfileView({ user, history, players, onUnlinkPlayer, onSignOut, syncMe
 // ─── App ──────────────────────────────────────────────────────────────────────
 
 const TABS = [
-  { key: 'players', label: 'Gracze', Icon: IconUsers },
-  { key: 'session', label: 'Sesja', Icon: IconPlay },
-  { key: 'settlement', label: 'Wyniki', Icon: IconCalc },
-  { key: 'history', label: 'Historia', Icon: IconTrophy },
-  { key: 'profile', label: 'Profil', Icon: IconUser },
+  { key: 'players', label: 'Gracze', Icon: IconUsers, aria: 'Zakładka Gracze — baza osób' },
+  { key: 'session', label: 'Sesja', Icon: IconPlay, aria: 'Zakładka Sesja — buy-iny przy stole' },
+  { key: 'settlement', label: 'Wyniki', Icon: IconCalc, aria: 'Zakładka Wyniki — cash-outy i przelewy' },
+  { key: 'history', label: 'Historia', Icon: IconTrophy, aria: 'Zakładka Historia — archiwum i ranking' },
+  { key: 'profile', label: 'Profil', Icon: IconUser, aria: 'Zakładka Profil — konto i synchronizacja' },
 ];
+
+const SCREEN_META = {
+  players: 'Dodaj stałych graczy, zanim zaczniesz sesję.',
+  session: 'Ustal buy-iny i kogo masz przy stole.',
+  settlement: 'Suma cash-outów musi równać się puli — wtedy zobaczysz przelewy.',
+  history: 'Archiwum sesji i ranking.',
+  profile: 'Konto i synchronizacja z chmurą.',
+};
+
+const ONBOARDING_KEY = 'poker_onboarding_dismissed';
 
 function App() {
   const { user, loading: authLoading } = useAuth();
@@ -1631,6 +1663,7 @@ function App() {
   const [retryingFailedSaves, setRetryingFailedSaves] = useState(false);
   const [syncMeta, setSyncMeta] = useState(() => loadLS(SYNC_META_KEY, { lastAttempt: null, lastSuccess: null, lastError: null }));
   const [cloudBanner, setCloudBanner] = useState(null);
+  const [onboardingOpen, setOnboardingOpen] = useState(() => !loadLS(ONBOARDING_KEY, false));
   const applyingRemoteSessionRef = React.useRef(false);
   const lastDraftHashRef = React.useRef(buildDraftHash(defaultBuyIn, sessionPlayers));
   const sessionPlayersRef = React.useRef(sessionPlayers);
@@ -2035,7 +2068,6 @@ function App() {
         notifyCloudFailure(msg);
         addFailedCloudSave({ sessionId, sessionRow, sessionPlayersRows, transferRows, participationRows });
         setSaveStatus({ type: 'error', message: 'Sesja zapisana lokalnie. Chmura nie zapisała wszystkiego, spróbuj ponownie później.' });
-        alert('Sesja zapisana lokalnie. Nie udało się w pełni zapisać do chmury.');
         console.error('Cloud save failed:', e);
       }
     }
@@ -2138,16 +2170,39 @@ function App() {
     <div className="min-h-screen bg-green-950 text-white">
       <div className="flex flex-col min-h-screen w-full max-w-lg mx-auto">
         <header className="sticky top-0 z-10 bg-green-950/90 backdrop-blur-sm border-b border-green-900 px-4 py-3 flex items-center justify-between shrink-0">
-          <div>
-            <h1 className="text-base font-bold text-white tracking-tight">♠ Poker Settler</h1>
-            {sessionPlayers.length > 0 && (
-              <p className="text-xs text-green-300/70">Pula: <span className="text-yellow-400 font-semibold">{totalPot} PLN</span></p>
+          <div className="min-w-0 pr-2">
+            <h1 className="text-lg font-bold text-white tracking-tight">♠ Poker Settler</h1>
+            {sessionPlayers.length > 0 ? (
+              <p className="text-xs text-green-200/65 mt-0.5 leading-snug">
+                Pula: <span className="text-yellow-400 font-semibold tabular-nums">{formatPln(totalPot)} PLN</span>
+                <span className="text-green-200/45"> · {SCREEN_META[tab]}</span>
+              </p>
+            ) : (
+              <p className="text-xs text-green-200/60 mt-0.5 leading-snug">{SCREEN_META[tab]}</p>
             )}
           </div>
-          <span className="text-xs text-green-200/50 bg-black/30 rounded-full px-2.5 py-1">
+          <span className="text-xs text-green-200/60 bg-black/30 rounded-full px-2.5 py-1 shrink-0 tabular-nums">
             {sessionPlayers.length} {sessionPlayers.length === 1 ? 'gracz' : 'graczy'}
           </span>
         </header>
+
+        {onboardingOpen && (
+          <div className="px-4 py-3 bg-emerald-950/50 border-b border-emerald-900/60 shrink-0" role="region" aria-label="Wprowadzenie">
+            <p className="text-xs text-emerald-100/90 leading-relaxed">
+              <span className="font-semibold text-emerald-300">Start:</span>{' '}
+              <span className="text-emerald-100/85">1) Gracze</span> — baza osób.{' '}
+              <span className="text-emerald-100/85">2) Sesja</span> — buy-iny.{' '}
+              <span className="text-emerald-100/85">3) Wyniki</span> — cash-outy i przelewy.{' '}
+              <span className="text-emerald-100/85">4) Historia</span> — archiwum.
+            </p>
+            <button
+              type="button"
+              onClick={() => { saveLS(ONBOARDING_KEY, true); setOnboardingOpen(false); }}
+              className="mt-2 text-xs font-semibold bg-emerald-800/80 hover:bg-emerald-700 text-white rounded-lg px-3 py-1.5 transition-colors">
+              Rozumiem, ukryj
+            </button>
+          </div>
+        )}
 
         {cloudBanner && (
           <div className="px-4 py-2 bg-yellow-900/40 border-b border-yellow-800/50 flex items-start justify-between gap-2 shrink-0">
@@ -2156,7 +2211,7 @@ function App() {
           </div>
         )}
 
-        <main className="flex-1 pb-24">
+        <main className="flex-1 main-scroll-pad">
           {tab === 'players' && <PlayersTab players={players} sessionPlayers={sessionPlayers} onAddPlayer={addPlayer} onUpdatePlayer={updatePlayer} onRemovePlayer={removePlayer} onAddToSession={addToSession} onLinkPlayer={linkPlayer} onUnlinkPlayer={unlinkPlayer} />}
           {tab === 'session' && <SessionTab players={players} sessionPlayers={sessionPlayers} defaultBuyIn={defaultBuyIn} totalPot={totalPot} onDefaultBuyInChange={setDefaultBuyIn} onAddBuyIn={addBuyIn} onRemoveBuyIn={removeBuyIn} onRemoveFromSession={removeFromSession} onAddToSession={addToSession} onGoToSettlement={() => setTab('settlement')} />}
           {tab === 'settlement' && <SettlementTab players={players} sessionPlayers={sessionPlayers} transactions={transactions} settled={settled} totalPot={totalPot} onSetCashOut={setCashOut} onCalculate={handleCalculate} onResetSession={resetSession} onSaveAndFinish={saveAndFinishSession} savingSession={savingSession} saveStatus={saveStatus} />}
@@ -2164,17 +2219,22 @@ function App() {
           {tab === 'profile' && <ProfileView user={user} history={combinedHistory} players={players} onUnlinkPlayer={unlinkPlayer} onSignOut={handleSignOut} syncMeta={syncMeta} onRetrySyncFailed={retryFailedSaves} retryingFailedSaves={retryingFailedSaves} failedCloudSavesCount={failedCloudSaves.length} />}
         </main>
 
-        <nav className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-lg bg-green-950/90 backdrop-blur-sm border-t border-green-900 flex z-10">
-          {TABS.map(({ key, label, Icon }) => {
+        <nav className="nav-safe fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-lg bg-green-950/90 backdrop-blur-sm border-t border-green-900 flex z-10" role="navigation" aria-label="Główne zakładki">
+          {TABS.map(({ key, label, Icon, aria }) => {
             const isDisabled = key === 'settlement' && sessionPlayers.length === 0;
             const showFailedSyncBadge = key === 'history' && failedCloudSaves.length > 0;
+            const active = tab === key;
             return (
-              <button key={key}
+              <button key={key} type="button"
+                aria-current={active ? 'page' : undefined}
+                aria-label={aria}
+                aria-disabled={isDisabled ? true : undefined}
                 onClick={() => { if (isDisabled) { setTab('session'); return; } setTab(key); }}
-                title={isDisabled ? 'Najpierw rozpocznij sesję' : ''}
-                className={`flex-1 flex flex-col items-center py-3 gap-1 text-xs font-medium transition-colors
-                  ${tab === key ? 'text-rose-400' : isDisabled ? 'text-green-900 cursor-not-allowed' : 'text-green-800 hover:text-green-400'}`}>
-                <span className={`relative ${isDisabled ? 'opacity-30' : ''}`}>
+                title={isDisabled ? 'Najpierw dodaj graczy do sesji' : label}
+                className={`flex-1 flex flex-col items-center py-2.5 gap-0.5 text-xs font-medium transition-colors border-t-2
+                  ${active ? 'text-rose-400 border-rose-500' : 'border-transparent'}
+                  ${isDisabled ? 'text-green-900 cursor-not-allowed' : !active ? 'text-green-800 hover:text-green-400' : ''}`}>
+                <span className={`relative ${isDisabled ? 'opacity-30' : ''}`} aria-hidden="true">
                   <Icon />
                   {showFailedSyncBadge && (
                     <span className="absolute -top-1.5 -right-2 min-w-[16px] h-4 px-1 rounded-full bg-yellow-500 text-[10px] leading-4 text-black font-bold">
@@ -2182,7 +2242,7 @@ function App() {
                     </span>
                   )}
                 </span>
-                <span className={isDisabled ? 'opacity-30' : ''}>{label}</span>
+                <span className={`${isDisabled ? 'opacity-30' : ''} leading-tight`}>{label}</span>
               </button>
             );
           })}
