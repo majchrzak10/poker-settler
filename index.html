@@ -182,6 +182,13 @@ function buildDraftHash(defaultBuyIn, sessionPlayers) {
   });
 }
 
+/** Porównanie timestamptz ISO z Supabase (ms). */
+function isoToMs(iso) {
+  if (!iso) return 0;
+  const t = new Date(iso).getTime();
+  return Number.isNaN(t) ? 0 : t;
+}
+
 function getTotalBuyIn(sp) {
   return sp.buyIns.reduce((sum, b) => sum + b, 0);
 }
@@ -1666,6 +1673,7 @@ function App() {
   const [onboardingOpen, setOnboardingOpen] = useState(() => !loadLS(ONBOARDING_KEY, false));
   const applyingRemoteSessionRef = React.useRef(false);
   const lastDraftHashRef = React.useRef(buildDraftHash(defaultBuyIn, sessionPlayers));
+  const lastMergedLiveUpdatedAtRef = React.useRef(null);
   const sessionPlayersRef = React.useRef(sessionPlayers);
   const defaultBuyInRef = React.useRef(defaultBuyIn);
 
@@ -1704,31 +1712,77 @@ function App() {
     defaultBuyInRef.current = defaultBuyIn;
   }, [defaultBuyIn]);
 
+  useEffect(() => {
+    lastMergedLiveUpdatedAtRef.current = null;
+  }, [user?.id]);
+
   const refreshCloudData = React.useCallback(async () => {
     if (!user) return;
-    const [{ data: pData }, { data: sData }, { data: sharedData }, { data: liveDraft }] = await Promise.all([
+    const [playersRes, sessionsRes, sharedRes, liveRes] = await Promise.all([
       supabase.from('players').select('*').eq('owner_id', user.id).order('created_at'),
       supabase.from('sessions').select('id, played_at, total_pot, session_players(player_id, player_name, total_buy_in, cash_out, net_balance), transfers(from_name, to_name, amount)').eq('owner_id', user.id).order('played_at'),
       supabase.from('participations').select('*').eq('user_id', user.id).order('session_date'),
       supabase.from('live_session_state').select('default_buy_in, session_players, updated_at').eq('owner_id', user.id).maybeSingle(),
     ]);
-    setPlayers((pData || []).map(p => ({ id: p.id, name: p.name, phone: p.phone || '', linked_user_id: p.linked_user_id || null })));
-    setHistory((sData || []).map(s => ({
+    if (playersRes.error || sessionsRes.error) {
+      console.warn('refreshCloudData players/sessions', playersRes.error, sessionsRes.error);
+      return;
+    }
+    if (sharedRes.error) console.warn('refreshCloudData participations', sharedRes.error);
+    if (liveRes.error) console.warn('refreshCloudData live_session_state', liveRes.error);
+
+    const pData = playersRes.data;
+    const sData = sessionsRes.data;
+    const sharedData = sharedRes.data;
+    const liveDraft = liveRes.error ? null : liveRes.data;
+
+    const cloudPlayers = (pData || []).map(p => ({ id: p.id, name: p.name, phone: p.phone || '', linked_user_id: p.linked_user_id || null }));
+    setPlayers(prev => {
+      const seen = new Set(cloudPlayers.map(p => p.id));
+      const extras = prev.filter(p => !seen.has(p.id));
+      return extras.length ? [...cloudPlayers, ...extras] : cloudPlayers;
+    });
+
+    const mapSessionRow = s => ({
       id: s.id, date: s.played_at, totalPot: s.total_pot / 100,
       players: (s.session_players || []).map(sp => ({ id: sp.player_id || generateId(), name: sp.player_name, phone: '', totalBuyIn: sp.total_buy_in / 100, cashOut: sp.cash_out != null ? sp.cash_out / 100 : 0, netBalance: sp.net_balance != null ? sp.net_balance / 100 : 0 })),
       transfers: (s.transfers || []).map(t => ({ from: t.from_name, to: t.to_name, amount: t.amount / 100 })),
-    })));
-    setSharedHistory(mapSharedParticipations(sharedData || []));
-    if (liveDraft) {
-      const remoteDefaultBuyIn = Number(liveDraft.default_buy_in) || 50;
-      const remoteSessionPlayers = normalizeDraftSessionPlayers(liveDraft.session_players);
-      const remoteHash = buildDraftHash(remoteDefaultBuyIn, remoteSessionPlayers);
-      const localHash = buildDraftHash(defaultBuyInRef.current, sessionPlayersRef.current);
-      if (remoteHash !== localHash) {
-        applyingRemoteSessionRef.current = true;
-        lastDraftHashRef.current = remoteHash;
-        setDefaultBuyIn(remoteDefaultBuyIn);
-        setSessionPlayers(remoteSessionPlayers);
+    });
+    const cloudHistory = (sData || []).map(mapSessionRow);
+    setHistory(prev => {
+      const ids = new Set(cloudHistory.map(s => s.id));
+      const localOnly = prev.filter(s => !ids.has(s.id) && !String(s.id).startsWith('shared:'));
+      if (localOnly.length === 0) return cloudHistory;
+      return [...cloudHistory, ...localOnly].sort((a, b) => new Date(a.date) - new Date(b.date));
+    });
+
+    if (!sharedRes.error) setSharedHistory(mapSharedParticipations(sharedData || []));
+
+    if (liveDraft && !liveRes.error) {
+      const remoteTs = liveDraft.updated_at;
+      const lastPushMeta = loadLS(`poker_live_push_${user.id}`, null);
+      const lastLocalPushAt = lastPushMeta?.updated_at;
+      const remoteIsNewerThanOurPush = !lastLocalPushAt || isoToMs(remoteTs) > isoToMs(lastLocalPushAt);
+      const mergedRef = lastMergedLiveUpdatedAtRef.current;
+      const remoteNewerThanLastMerge = !mergedRef || isoToMs(remoteTs) > isoToMs(mergedRef);
+
+      if (remoteIsNewerThanOurPush && remoteNewerThanLastMerge) {
+        const remoteDefaultBuyIn = Number(liveDraft.default_buy_in) || 50;
+        const remoteSessionPlayers = normalizeDraftSessionPlayers(liveDraft.session_players);
+        const localNorm = normalizeDraftSessionPlayers(sessionPlayersRef.current);
+        if (!lastLocalPushAt && localNorm.length > 0 && remoteSessionPlayers.length === 0) {
+          lastMergedLiveUpdatedAtRef.current = remoteTs;
+          lastDraftHashRef.current = buildDraftHash(defaultBuyInRef.current, sessionPlayersRef.current);
+          saveLS(`poker_live_push_${user.id}`, { updated_at: remoteTs });
+        } else {
+          const remoteHash = buildDraftHash(remoteDefaultBuyIn, remoteSessionPlayers);
+          applyingRemoteSessionRef.current = true;
+          lastMergedLiveUpdatedAtRef.current = remoteTs;
+          lastDraftHashRef.current = remoteHash;
+          saveLS(`poker_live_push_${user.id}`, { updated_at: remoteTs });
+          setDefaultBuyIn(remoteDefaultBuyIn);
+          setSessionPlayers(remoteSessionPlayers);
+        }
       }
     }
   }, [user?.id]);
@@ -1757,8 +1811,6 @@ function App() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'players', filter: `owner_id=eq.${user.id}` }, scheduleRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'sessions', filter: `owner_id=eq.${user.id}` }, scheduleRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'live_session_state', filter: `owner_id=eq.${user.id}` }, scheduleRefresh)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'session_players' }, scheduleRefresh)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'transfers' }, scheduleRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'participations', filter: `user_id=eq.${user.id}` }, scheduleRefresh)
       .subscribe();
 
@@ -1767,12 +1819,15 @@ function App() {
     }, 12000);
 
     const onFocus = () => scheduleRefresh();
+    const onOnline = () => scheduleRefresh();
     window.addEventListener('focus', onFocus);
+    window.addEventListener('online', onOnline);
 
     return () => {
       clearTimeout(timer);
       clearInterval(poll);
       window.removeEventListener('focus', onFocus);
+      window.removeEventListener('online', onOnline);
       supabase.removeChannel(channel);
     };
   }, [user?.id, refreshCloudData]);
@@ -1892,6 +1947,8 @@ function App() {
         recordSyncError(error.message || 'Błąd synchronizacji aktywnej sesji');
       } else {
         lastDraftHashRef.current = draftHash;
+        lastMergedLiveUpdatedAtRef.current = payload.updated_at;
+        saveLS(`poker_live_push_${user.id}`, { updated_at: payload.updated_at });
       }
     }, 350);
     return () => clearTimeout(timer);
