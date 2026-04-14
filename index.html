@@ -119,6 +119,12 @@ function isRpcMissingError(err) {
   return err?.code === 'PGRST202' || err?.code === '42883' || /save_session_atomic|update_session_atomic|function.*does not exist/i.test(m);
 }
 
+/** Tabela live_session_state nie wdrożona (migracja 002) — PostgREST zwraca m.in. PGRST205. */
+function isMissingLiveSessionTableError(err) {
+  const m = (err?.message || '') + (err?.details || '');
+  return err?.code === 'PGRST205' || /live_session_state.*schema cache|Could not find the table.*live_session_state|relation.*live_session_state.*does not exist/i.test(m);
+}
+
 const { useState, useEffect } = React;
 
 function useAuth() {
@@ -1944,7 +1950,12 @@ function App() {
       };
       const { error } = await supabase.from('live_session_state').upsert(payload, { onConflict: 'owner_id' });
       if (error) {
-        recordSyncError(error.message || 'Błąd synchronizacji aktywnej sesji');
+        if (isMissingLiveSessionTableError(error)) {
+          setSyncMeta(prev => ({ ...prev, lastError: null }));
+          console.warn('Supabase: brak tabeli live_session_state. W Dashboard → SQL uruchom plik supabase/migrations/002_live_session_state.sql');
+        } else {
+          recordSyncError(error.message || 'Błąd synchronizacji aktywnej sesji');
+        }
       } else {
         lastDraftHashRef.current = draftHash;
         lastMergedLiveUpdatedAtRef.current = payload.updated_at;
