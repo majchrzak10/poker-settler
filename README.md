@@ -28,7 +28,9 @@ Kwoty w Supabase są przechowywane jako **centy (integer)**. UI pracuje na PLN (
    supabase/migrations/000_profiles_players_participations.sql
    supabase/migrations/001_session_atomic.sql
    supabase/migrations/002_live_session_state.sql
+   supabase/migrations/003_profile_on_signup.sql
    ```
+   Migracja **003** dodaje trigger: przy rejestracji od razu powstaje wiersz w `profiles` z emailem (łączenie graczy po adresie działa nawet przed pierwszym logowaniem). Jeśli masz już własny trigger z panelu Supabase, uruchom skrypt świadomie (może nadpisać funkcję `handle_new_user`).
 4. Włącz Realtime dla tabel: `players`, `sessions`, `session_players`, `transfers`, `participations`
    — Dashboard → Database → Replication → zaznacz tabele.
 
@@ -97,6 +99,7 @@ supabase/
     000_profiles_players_participations.sql  ← tabele bazowe + RLS
     001_session_atomic.sql                   ← funkcje SECURITY DEFINER dla atomowego zapisu sesji
     002_live_session_state.sql               ← synchronizacja aktywnej sesji między urządzeniami
+    003_profile_on_signup.sql                ← trigger: profil + email przy rejestracji (łączenie kont)
 ```
 
 ## GitHub
