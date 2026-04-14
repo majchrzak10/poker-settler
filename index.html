@@ -703,7 +703,7 @@ function SessionTab({ players, sessionPlayers, defaultBuyIn, totalPot, onDefault
                   <p className="font-semibold text-white truncate">{player.name}</p>
                 </div>
                 <div className="text-right mr-1 shrink-0">
-                  <p className="text-yellow-400 font-bold text-lg">{total}</p>
+                  <p className="text-yellow-400 font-bold text-lg tabular-nums">{formatPln(total)}</p>
                   <p className="text-xs text-green-200/50">PLN</p>
                 </div>
                 <button onClick={() => onRemoveFromSession(sp.playerId)} className="text-green-900 hover:text-rose-400 transition-colors p-1 shrink-0">
@@ -717,7 +717,7 @@ function SessionTab({ players, sessionPlayers, defaultBuyIn, totalPot, onDefault
                 </button>
                 <div className="flex-1 flex flex-col items-center justify-center py-3 bg-black/30">
                   <p className="font-bold text-white leading-tight">
-                    {sp.buyIns.length}<span className="text-green-200/50 font-normal">×</span> <span className="text-yellow-400">{defaultBuyIn}</span> <span className="text-green-200/50 text-sm font-normal">PLN</span>
+                    {sp.buyIns.length}<span className="text-green-200/50 font-normal">×</span> <span className="text-yellow-400 tabular-nums">{formatPln(defaultBuyIn)}</span> <span className="text-green-200/50 text-sm font-normal">PLN</span>
                   </p>
                   <p className="text-xs text-green-200/55 mt-0.5">= {formatPln(total)} PLN łącznie</p>
                 </div>
@@ -790,11 +790,11 @@ function SettlementTab({ players, sessionPlayers, transactions, settled, totalPo
       const buyInTotal = getTotalBuyIn(sp);
       const cashOut = parseFloat(sp.cashOut) || 0;
       const net = cashOut - buyInTotal;
-      return `  ${player?.name ?? '?'}: ${net >= 0 ? '+' : ''}${net} PLN`;
+      return `  ${player?.name ?? '?'}: ${net >= 0 ? '+' : ''}${formatPln(net)} PLN`;
     });
     const transferLines = transactions.length === 0
       ? ['  Nikt nikomu nie jest winien!']
-      : transactions.map(t => `  ${t.from} → ${t.to}: ${t.amount} PLN${t.toPhone ? ` (Tel: ${t.toPhone})` : ''}`);
+      : transactions.map(t => `  ${t.from} → ${t.to}: ${formatPln(t.amount)} PLN${t.toPhone ? ` (Tel: ${t.toPhone})` : ''}`);
     const report = [`♠ Rozliczenie Poker — ${date}`, `Pula: ${formatPln(totalPot)} PLN`, '', 'Wyniki:', ...results, '', 'Przelewy:', ...transferLines].join('\n');
     try {
       await navigator.clipboard.writeText(report);
@@ -972,7 +972,7 @@ function recalculateSession(session, updatedPlayers) {
 function NetBadge({ value }) {
   if (value > 0) return <span className="font-bold text-green-500">+{formatPln(value)} PLN</span>;
   if (value < 0) return <span className="font-bold text-red-500">−{formatPln(-value)} PLN</span>;
-  return <span className="font-bold text-green-200/55">0 PLN</span>;
+  return <span className="font-bold text-green-200/55 tabular-nums">{formatPln(0)} PLN</span>;
 }
 
 const MEDALS = ['🥇', '🥈', '🥉'];
@@ -1034,10 +1034,10 @@ function HistoryTab({ history, onUpdateSession, onDeleteSession, failedSyncCount
     const playerLines = [...session.players].sort((a, b) => b.netBalance - a.netBalance).map(p => {
       const emoji = p.netBalance > 0 ? '🟢' : p.netBalance < 0 ? '🔴' : '⚪️';
       const sign = p.netBalance > 0 ? '+' : '';
-      return `${emoji} ${p.name}: *${sign}${p.netBalance} PLN*`;
+      return `${emoji} ${p.name}: *${sign}${formatPln(p.netBalance)} PLN*`;
     });
     const transferLines = session.transfers.length > 0
-      ? session.transfers.map(t => `• ${t.from} ➜ ${t.to}: *${t.amount} PLN*${t.toPhone ? `  📱 ${t.toPhone}` : ''}`)
+      ? session.transfers.map(t => `• ${t.from} ➜ ${t.to}: *${formatPln(t.amount)} PLN*${t.toPhone ? `  📱 ${t.toPhone}` : ''}`)
       : ['✅ Brak przelewów — wszyscy wyszli na zero!'];
     const text = [`♠️ *Poker Night — ${date}*`, `💰 *Pula: ${formatPln(session.totalPot)} PLN*`, '', '📊 *Wyniki:*', ...playerLines, '', '💸 *Przelewy:*', ...transferLines].join('\n');
     if (navigator.share) { try { await navigator.share({ text }); return; } catch {} }
