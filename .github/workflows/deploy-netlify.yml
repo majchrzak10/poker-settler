@@ -1,0 +1,33 @@
+# Wdrożenie produkcyjne na Netlify po pushu na main.
+# Wymaga sekretów repozytorium: NETLIFY_AUTH_TOKEN, NETLIFY_SITE_ID
+# (Netlify → User settings → Applications → New access token; Site settings → Site details → API ID)
+#
+# Jeśli w Netlify masz już „Continuous deployment” z GitHuba, NIE dodawaj tych sekretów
+# albo wyłącz wbudowane deploy z repo — inaczej każdy push zbuduje stronę dwukrotnie.
+
+name: Deploy to Netlify
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: netlify-${{ github.repository }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Netlify CLI
+        run: npm install -g netlify-cli
+
+      - name: Deploy production
+        run: netlify deploy --prod --dir . --message "${{ github.event.head_commit.message || github.run_id }}"
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
