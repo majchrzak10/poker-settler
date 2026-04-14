@@ -4,7 +4,7 @@ Aplikacja PWA do rozliczania pokerowych sesji ze znajomymi. Wpisz buy-iny, wpisz
 
 ## Architektura
 
-Cała aplikacja to **jeden plik `index.html`** — bez bundlera, bez npm.
+Interfejs to **`index.html`** (React z CDN, Babel w przeglądarce) oraz **`lib/settlement.js`** — współdzielona logika rozliczeń (ładowana przed głównym skryptem). **Nie ma kroku build ani `npm install` do uruchomienia aplikacji.** W repozytorium jest `package.json` wyłącznie pod **`npm test`** (testy jednostkowe logiki w Node).
 
 | Warstwa | Technologia |
 |---------|-------------|
@@ -18,7 +18,7 @@ Kwoty w Supabase są przechowywane jako **centy (integer)**. UI pracuje na PLN (
 ## Konfiguracja Supabase
 
 1. Utwórz projekt na [supabase.com](https://supabase.com).
-2. W `index.html` (linie 68–69) ustaw swoje dane:
+2. W `index.html` (stałe `SUPABASE_URL` / `SUPABASE_KEY` na początku skryptu Babel) ustaw swoje dane:
    ```js
    const SUPABASE_URL = 'https://TWOJ_PROJEKT.supabase.co';
    const SUPABASE_KEY = 'sb_publishable_...';  // anon/public key
@@ -42,6 +42,14 @@ python3 -m http.server 8080
 ```
 
 Błędy JSX widać w konsoli przeglądarki (Babel transpiluje w runtime).
+
+## Testy (opcjonalnie, Node.js)
+
+```bash
+npm test
+```
+
+Uruchamia `node --test` na [test/settlement.test.js](test/settlement.test.js) (funkcje z [lib/settlement.js](lib/settlement.js)).
 
 ## Deploy (Netlify)
 
@@ -80,7 +88,9 @@ Nie ma kroku budowania — deploy to po prostu opublikowanie plików statycznych
 ## Struktura katalogów
 
 ```
-index.html                        ← cała aplikacja
+index.html                        ← UI React + integracja Supabase
+lib/settlement.js                 ← plnToCents, settleDebts, pluralPL (wspólne z testami)
+test/settlement.test.js          ← testy Node
 CLAUDE.md                         ← wskazówki dla Claude Code
 supabase/
   migrations/

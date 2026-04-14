@@ -4,18 +4,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-**Poker Settler** — single-page Polish-language PWA for settling poker debts among friends. The entire application lives in one file: `index.html`.
+**Poker Settler** — single-page Polish-language PWA for settling poker debts among friends. Main UI is `index.html`; shared settlement helpers live in `lib/settlement.js` (also covered by `npm test`).
 
 ## Architecture
 
-Single `index.html` file with no build step. React, Babel, Tailwind, and Supabase are all loaded via CDN. JSX is transpiled in the browser by Babel Standalone.
+Single `index.html` file with no build step. React, Babel, Tailwind, and Supabase are all loaded via CDN. JSX is transpiled in the browser by Babel Standalone. `lib/settlement.js` exposes `plnToCents`, `settleDebts`, and `pluralPL` on `window.PokerSettlerCore` before the Babel bundle runs.
 
 ```
 index.html
-├── <head>      — CDN imports, PWA manifest (generated dynamically), Tailwind config
+├── <head>      — CDN imports, PWA manifest + icons (single base64, injected by script), Tailwind config
+├── lib/settlement.js — plnToCents, settleDebts, pluralPL
 └── <script type="text/babel">
     ├── Supabase client init (SUPABASE_URL, SUPABASE_KEY)
-    ├── Utils: generateId, loadLS, getTotalBuyIn, settleDebts, pluralPL, formatDate, formatPhone
+    ├── Utils: generateId, loadLS, getTotalBuyIn, formatDate, formatPhone (settlement utils from PokerSettlerCore)
     ├── Icons — inline SVG components
     ├── useAuth — Supabase auth hook
     ├── AuthScreen — login / registration

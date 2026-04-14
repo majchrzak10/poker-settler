@@ -4,7 +4,7 @@
   "description": "Aplikacja PWA do rozliczania pokerowych sesji ze znajomymi. Wpisz buy-iny, wpisz cash-outy — dostaniesz minimalną listę przelewów.",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --test test/settlement.test.js"
   },
   "repository": {
     "type": "git",
@@ -17,8 +17,5 @@
   "bugs": {
     "url": "https://github.com/majchrzak10/poker-settler/issues"
   },
-  "homepage": "https://github.com/majchrzak10/poker-settler#readme",
-  "dependencies": {
-    "@supabase/supabase-js": "^2.103.0"
-  }
+  "homepage": "https://github.com/majchrzak10/poker-settler#readme"
 }
