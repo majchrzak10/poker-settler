@@ -25,6 +25,7 @@ Kwoty w Supabase są przechowywane jako **centy (integer)**. UI pracuje na PLN (
    ```
 3. Uruchom migracje **po kolei** w **SQL Editor** (Supabase Dashboard), pliki z `supabase/migrations/`:
    `000` … `009` (w tym **007** RLS profili/graczy, **008** Realtime, **009** funkcje `complete_friend_player_link` / `remove_friend_player_link` — bez **009** powiązania znajomych z klienta mogą kończyć się błędem RLS).
+   Dla starszych baz szczególnie ważne są: **003** (trigger tworzenia profilu), **005** (backfill brakujących profili + indeks linkowania), **009** (finalizacja/odpinanie powiązań znajomych przez RPC).
    Migracja **003** dodaje trigger: przy rejestracji od razu powstaje wiersz w `profiles` z emailem. Jeśli masz już własny trigger z panelu Supabase, uruchom skrypt świadomie (może nadpisać funkcję `handle_new_user`).
 4. Realtime: migracja **008** dopisuje tabele do publikacji `supabase_realtime`; jeśli wdrażasz ręcznie starszą bazę, w Dashboard → **Database → Publications** upewnij się, że te tabele są w replikacji (jak w **008**).
 
@@ -87,6 +88,15 @@ Nie ma kroku budowania — deploy to po prostu opublikowanie plików statycznych
 6. Zapisz sesję → sprawdź zakładkę **Historia**.
 7. W Supabase Dashboard → Table Editor zweryfikuj wpisy w `sessions` i `transfers`.
 
+### Smoke test: 2 konta / 2 telefony (znajomi + sesja)
+
+1. Na telefonie A zaloguj KontoA, na telefonie B zaloguj KontoB.
+2. W KontoA dodaj gracza i połącz go z KontoB (email lub ID z Profilu).
+3. Sprawdź na KontoB w sekcji **Znajomi**, czy KontoA pojawia się automatycznie.
+4. W KontoA odepnij link i potwierdź, że zniknął po obu stronach.
+5. Na obu kontach zamknij aplikację, otwórz ponownie — konto ma pozostać zalogowane.
+6. Użyj ręcznego wylogowania i potwierdź, że wraca ekran logowania.
+
 ## Struktura katalogów
 
 ```
@@ -100,6 +110,8 @@ supabase/
     001_session_atomic.sql                   ← funkcje SECURITY DEFINER dla atomowego zapisu sesji
     002_live_session_state.sql               ← synchronizacja aktywnej sesji między urządzeniami
     003_profile_on_signup.sql                ← trigger: profil + email przy rejestracji (łączenie kont)
+    004_realtime_live_session_state.sql      ← dodanie live_session_state do publikacji Realtime
+    005_profiles_backfill_and_link_index.sql ← backfill starych profili + indeks dla linkowania wzajemnego
 ```
 
 ## GitHub

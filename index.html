@@ -160,14 +160,38 @@ function useAuth() {
     return false;
   });
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    let active = true;
+    const applySession = session => {
+      if (!active) return;
       setUser(session?.user ?? null);
       setLoading(false);
+    };
+    const syncSessionFromStorage = async () => {
+      const { data, error } = await supabase.auth.getSession();
+      if (error) console.warn('auth.getSession', error.message || error);
+      applySession(data?.session ?? null);
+    };
+    syncSessionFromStorage();
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_OUT') {
+        setUser(null);
+        setLoading(false);
+        return;
+      }
+      applySession(session);
     });
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_, session) => {
-      setUser(session?.user ?? null);
-    });
-    return () => subscription.unsubscribe();
+    const onFocus = () => { syncSessionFromStorage(); };
+    const onVisibility = () => {
+      if (!document.hidden) syncSessionFromStorage();
+    };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      active = false;
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibility);
+      subscription.unsubscribe();
+    };
   }, []);
   return { user, loading, emailConfirmed, setEmailConfirmed };
 }
