@@ -32,8 +32,9 @@ export function useDebouncedLocalStorage(key: string, value: unknown, delay = 22
   }, [key, value, delay]);
 }
 
-export function normalizeDraftSessionPlayers(rows: unknown[]) {
-  return (rows || []).map((sp: Record<string, unknown>) => ({
+export function normalizeDraftSessionPlayers(rows: unknown) {
+  const list = Array.isArray(rows) ? rows : [];
+  return list.map((sp: Record<string, unknown>) => ({
     playerId: sp.playerId,
     buyIns: Array.isArray(sp.buyIns) ? sp.buyIns.map((n: unknown) => Number(n) || 0) : [],
     cashOut: typeof sp.cashOut === 'string' ? sp.cashOut : String(sp.cashOut ?? ''),

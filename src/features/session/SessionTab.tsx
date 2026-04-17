@@ -1,6 +1,7 @@
 // @ts-nocheck
 import React, { useState } from 'react';
 import { formatPln } from '../../lib/settlement';
+import { getTotalBuyIn } from '../../lib/format';
 import { IconX, IconMinus, IconPlus, IconChevUp, IconChevDown, IconPlusCircle } from '../../ui/icons';
 
 export function SessionTab({ players, sessionPlayers, defaultBuyIn, totalPot, autoAddMeToSession, onToggleAutoAddMe, onDefaultBuyInChange, onAddBuyIn, onRemoveBuyIn, onRemoveFromSession, onAddToSession, onGoToSettlement }) {
