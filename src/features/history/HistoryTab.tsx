@@ -1,6 +1,7 @@
 // @ts-nocheck
 import React, { useState, useMemo } from 'react';
-import { pluralPL, formatPln } from '../../lib/settlement';
+import { pluralPL, formatPln, plnToCents } from '../../lib/settlement';
+import { formatDate } from '../../lib/format';
 import { calculateAllTimeStats, recalculateSession, NetBadge, MEDALS, PERIODS } from './historyUtils';
 import { IconCheck, IconShare, IconChevUp, IconChevDown, IconPencil, IconTrash, IconRefresh, IconX, IconArrow, IconPhone } from '../../ui/icons';
 
@@ -24,7 +25,7 @@ export function HistoryTab({ history, onUpdateSession, onDeleteSession, failedSy
   const failedSessionIdSet = useMemo(() => new Set(failedSessionIds), [failedSessionIds]);
 
   const enterEdit = session => {
-    setSessionDrafts(prev => ({ ...prev, [session.id]: session.players.map(p => ({ ...p })) }));
+    setSessionDrafts(prev => ({ ...prev, [session.id]: (session.players ?? []).map(p => ({ ...p })) }));
     setEditingIds(prev => ({ ...prev, [session.id]: true }));
     setSessionEditErrors(prev => ({ ...prev, [session.id]: null }));
   };
@@ -52,13 +53,14 @@ export function HistoryTab({ history, onUpdateSession, onDeleteSession, failedSy
   };
   const shareSession = async session => {
     const date = new Date(session.date).toLocaleDateString('pl-PL', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
-    const playerLines = [...session.players].sort((a, b) => b.netBalance - a.netBalance).map(p => {
+    const playerLines = [...(session.players ?? [])].sort((a, b) => b.netBalance - a.netBalance).map(p => {
       const emoji = p.netBalance > 0 ? '🟢' : p.netBalance < 0 ? '🔴' : '⚪️';
       const sign = p.netBalance > 0 ? '+' : '';
       return `${emoji} ${p.name}: *${sign}${formatPln(p.netBalance)} PLN*`;
     });
-    const transferLines = session.transfers.length > 0
-      ? session.transfers.map(t => `• ${t.from} ➜ ${t.to}: *${formatPln(t.amount)} PLN*${t.toPhone ? `  📱 ${t.toPhone}` : ''}`)
+    const transfers = session.transfers ?? [];
+    const transferLines = transfers.length > 0
+      ? transfers.map(t => `• ${t.from} ➜ ${t.to}: *${formatPln(t.amount)} PLN*${t.toPhone ? `  📱 ${t.toPhone}` : ''}`)
       : ['✅ Brak przelewów — wszyscy wyszli na zero!'];
     const text = [`♠️ *Poker Night — ${date}*`, `💰 *Pula: ${formatPln(session.totalPot)} PLN*`, '', '📊 *Wyniki:*', ...playerLines, '', '💸 *Przelewy:*', ...transferLines].join('\n');
     if (navigator.share) { try { await navigator.share({ text }); return; } catch {} }
@@ -156,7 +158,7 @@ export function HistoryTab({ history, onUpdateSession, onDeleteSession, failedSy
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-semibold text-white truncate">{formatDate(session.date)}</p>
                       <p className="text-xs text-green-200/50 mt-0.5">
-                        Pula: <span className="text-yellow-400 font-semibold tabular-nums">{formatPln(session.totalPot)} PLN</span> · {session.players.length} graczy
+                        Pula: <span className="text-yellow-400 font-semibold tabular-nums">{formatPln(session.totalPot)} PLN</span> · {(session.players ?? []).length} graczy
                       </p>
                       {isPendingSync && <p className="text-[11px] text-yellow-300 mt-0.5">Oczekuje na zapis do chmury</p>}
                       {isShared && (
@@ -211,7 +213,7 @@ export function HistoryTab({ history, onUpdateSession, onDeleteSession, failedSy
                       <p className="text-xs text-green-200/50 uppercase tracking-wider mb-2">Wyniki graczy</p>
                       {isEditing ? (
                         <div className="space-y-2">
-                          {(draft ?? session.players).map(p => (
+                          {(draft ?? session.players ?? []).map(p => (
                             <div key={p.id} className="bg-black/20 border border-green-900/60 rounded-xl p-3 space-y-2">
                               <div className="flex items-center gap-2">
                                 <div className="w-6 h-6 rounded-full bg-green-900/60 text-green-200 flex items-center justify-center text-xs font-bold shrink-0">
@@ -252,7 +254,7 @@ export function HistoryTab({ history, onUpdateSession, onDeleteSession, failedSy
                         </div>
                       ) : (
                         <div className="space-y-1.5">
-                          {session.players.map(p => (
+                          {(session.players ?? []).map(p => (
                             <div key={p.id} className="flex items-center justify-between">
                               <div className="flex items-center gap-2">
                                 <div className="w-6 h-6 rounded-full bg-green-900/60 text-green-200 flex items-center justify-center text-xs font-bold shrink-0">
@@ -270,11 +272,11 @@ export function HistoryTab({ history, onUpdateSession, onDeleteSession, failedSy
                       )}
                     </div>
                     {!isEditing && (
-                      session.transfers.length > 0 ? (
+                      (session.transfers ?? []).length > 0 ? (
                         <div>
                           <p className="text-xs text-green-200/50 uppercase tracking-wider mb-2">Przelewy</p>
                           <div className="space-y-1.5">
-                            {session.transfers.map((t, idx) => (
+                            {(session.transfers ?? []).map((t, idx) => (
                               <div key={idx} className="flex items-center justify-between">
                                 <div className="flex items-center gap-1.5 text-sm text-white min-w-0">
                                   <span className="truncate max-w-[80px]">{t.from}</span>

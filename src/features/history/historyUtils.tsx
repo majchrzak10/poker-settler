@@ -4,7 +4,7 @@ import { plnToCents, settleDebts, formatPln } from '../../lib/settlement';
 
 export function calculateAllTimeStats(history) {
   const map = history.reduce((acc, session) => {
-    for (const p of session.players) {
+    for (const p of session.players ?? []) {
       if (!acc[p.id])
         acc[p.id] = {
           id: p.id,
