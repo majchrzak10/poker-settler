@@ -142,6 +142,18 @@ const { useState, useEffect } = React;
 function useAuth() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [emailConfirmed, setEmailConfirmed] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+    const searchParams = new URLSearchParams(window.location.search);
+    const type = hashParams.get('type') || searchParams.get('type');
+    const hasToken = hashParams.get('access_token') || searchParams.get('token_hash') || searchParams.get('code');
+    if (hasToken && (type === 'signup' || type === 'email_confirmation')) {
+      window.history.replaceState({}, '', window.location.pathname);
+      return true;
+    }
+    return false;
+  });
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setUser(session?.user ?? null);
@@ -152,7 +164,7 @@ function useAuth() {
     });
     return () => subscription.unsubscribe();
   }, []);
-  return { user, loading };
+  return { user, loading, emailConfirmed, setEmailConfirmed };
 }
 
 // ─── Utils ───────────────────────────────────────────────────────────────────
@@ -395,11 +407,33 @@ function LoadingScreen() {
   );
 }
 
+function EmailConfirmedScreen({ onContinue }) {
+  return (
+    <div className="min-h-screen bg-green-950 flex items-center justify-center p-4">
+      <div className="w-full max-w-sm text-center space-y-6">
+        <div className="text-6xl">✅</div>
+        <div>
+          <h2 className="text-2xl font-bold text-white">Konto aktywowane!</h2>
+          <p className="text-green-200/60 text-sm mt-2">
+            Twój adres email został potwierdzony. Możesz się teraz zalogować.
+          </p>
+        </div>
+        <button onClick={onContinue}
+          className="w-full bg-rose-800 hover:bg-rose-900 rounded-xl py-3 text-sm font-semibold transition-colors">
+          Przejdź do logowania
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function AuthScreen() {
   const [mode, setMode] = useState('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [passwordConfirm, setPasswordConfirm] = useState('');
   const [name, setName] = useState('');
+  const [regPhone, setRegPhone] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(false);
@@ -429,13 +463,19 @@ function AuthScreen() {
     setLoading(true);
     setError('');
     setSuccess('');
+    if (password !== passwordConfirm) {
+      setError('Hasła nie są identyczne.');
+      setLoading(false);
+      return;
+    }
     const displayName = name.trim() || email.trim().split('@')[0];
+    const phoneDigits = regPhone.replace(/\s/g, '') || undefined;
     const { data, error } = await supabase.auth.signUp({
       email: email.trim(),
       password,
       options: {
         emailRedirectTo: typeof window !== 'undefined' ? `${window.location.origin}${window.location.pathname || '/'}` : undefined,
-        data: { display_name: displayName },
+        data: { display_name: displayName, phone: phoneDigits },
       },
     });
     if (error) {
@@ -450,7 +490,7 @@ function AuthScreen() {
     }
     if (data.session && data.user) {
       await supabase.from('profiles').upsert(
-        { id: data.user.id, display_name: displayName, email: email.trim().toLowerCase() },
+        { id: data.user.id, display_name: displayName, email: email.trim().toLowerCase(), phone: phoneDigits || null },
         { onConflict: 'id' }
       );
       setLoading(false);
@@ -475,7 +515,7 @@ function AuthScreen() {
         <div className="bg-black/30 border border-green-900 rounded-2xl p-6 space-y-4">
           <div className="flex bg-black/30 border border-green-900 rounded-xl p-1 gap-1">
             {['login','register'].map(m => (
-              <button key={m} onClick={() => { setMode(m); setError(''); setSuccess(''); }}
+              <button key={m} onClick={() => { setMode(m); setError(''); setSuccess(''); setPasswordConfirm(''); setRegPhone(''); }}
                 className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${mode === m ? 'bg-rose-800 text-white' : 'text-green-200/60 hover:text-green-200'}`}>
                 {m === 'login' ? 'Logowanie' : 'Rejestracja'}
               </button>
@@ -490,6 +530,14 @@ function AuthScreen() {
               className="w-full bg-black/40 rounded-xl px-4 py-3 text-sm text-white placeholder-green-700 border border-green-800 focus:outline-none focus:border-rose-600 transition-colors" />
             <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Hasło (min. 6 znaków) *" required minLength={6}
               className="w-full bg-black/40 rounded-xl px-4 py-3 text-sm text-white placeholder-green-700 border border-green-800 focus:outline-none focus:border-rose-600 transition-colors" />
+            {mode === 'register' && (
+              <input type="password" value={passwordConfirm} onChange={e => setPasswordConfirm(e.target.value)} placeholder="Potwierdź hasło *" required minLength={6}
+                className="w-full bg-black/40 rounded-xl px-4 py-3 text-sm text-white placeholder-green-700 border border-green-800 focus:outline-none focus:border-rose-600 transition-colors" />
+            )}
+            {mode === 'register' && (
+              <input type="tel" inputMode="numeric" value={regPhone} onChange={e => setRegPhone(formatPhone(e.target.value))} placeholder="Telefon (opcjonalnie)" maxLength={11}
+                className="w-full bg-black/40 rounded-xl px-4 py-3 text-sm text-white placeholder-green-700 border border-green-800 focus:outline-none focus:border-rose-600 transition-colors" />
+            )}
             {error && <p className="text-xs text-rose-400 px-1">{error}</p>}
             {success && <p className="text-xs text-emerald-400 px-1">{success}</p>}
             <button type="submit" disabled={loading}
@@ -633,11 +681,11 @@ function PlayersTab({ players, sessionPlayers, onAddPlayer, onUpdatePlayer, onRe
                       ) : (
                         <>
                           <p className="text-[11px] text-green-200/45 leading-snug">
-                            Email musi być taki sam jak na koncie znajomego w Poker Settler. Możesz też wkleić jego ID z zakładki Profil — działa zawsze.
+                            Wpisz email, numer telefonu lub ID konta znajomego (z jego zakładki Profil). Znajomy musi mieć konto w Poker Settler.
                           </p>
                           <div className="flex gap-2">
                             <input value={linkEmail} onChange={e => { setLinkEmail(e.target.value); setLinkMsg(''); }}
-                              placeholder="ID gracza (z Profilu) lub email" type="text" autoComplete="off"
+                              placeholder="Email, telefon lub ID z Profilu" type="text" autoComplete="off"
                               className="flex-1 bg-black/40 rounded-xl px-3 py-2 text-sm text-white placeholder-green-700 border border-green-800 focus:outline-none focus:border-emerald-600 transition-colors" />
                             <button onClick={async () => {
                               const err = await onLinkPlayer(p.id, linkEmail);
@@ -808,7 +856,7 @@ function SettlementTab({ players, sessionPlayers, transactions, settled, totalPo
   const allFilled = sessionPlayers.every(sp => sp.cashOut !== '');
   const progress = totalPot > 0 ? Math.min((totalCashOut / totalPot) * 100, 100) : 0;
 
-  const copyReport = async () => {
+  const buildReport = () => {
     const date = new Date().toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit', year: 'numeric' });
     const results = sessionPlayers.map(sp => {
       const player = players.find(p => p.id === sp.playerId);
@@ -820,7 +868,14 @@ function SettlementTab({ players, sessionPlayers, transactions, settled, totalPo
     const transferLines = transactions.length === 0
       ? ['  Nikt nikomu nie jest winien!']
       : transactions.map(t => `  ${t.from} → ${t.to}: ${formatPln(t.amount)} PLN${t.toPhone ? ` (Tel: ${t.toPhone})` : ''}`);
-    const report = [`♠ Rozliczenie Poker — ${date}`, `Pula: ${formatPln(totalPot)} PLN`, '', 'Wyniki:', ...results, '', 'Przelewy:', ...transferLines].join('\n');
+    return [`♠ Rozliczenie Poker — ${date}`, `Pula: ${formatPln(totalPot)} PLN`, '', 'Wyniki:', ...results, '', 'Przelewy:', ...transferLines].join('\n');
+  };
+
+  const copyReport = async () => {
+    const report = buildReport();
+    if (navigator.share) {
+      try { await navigator.share({ text: report }); return; } catch (e) { if (e?.name === 'AbortError') return; }
+    }
     try {
       await navigator.clipboard.writeText(report);
       setCopied(true);
@@ -951,7 +1006,7 @@ function SettlementTab({ players, sessionPlayers, transactions, settled, totalPo
           )}
           <button onClick={copyReport}
             className="w-full flex items-center justify-center gap-2 bg-black/30 hover:bg-black/50 border border-green-900 rounded-xl py-3.5 text-sm font-semibold transition-colors">
-            {copied ? <IconCheck /> : <IconCopy />} {copied ? 'Skopiowano!' : 'Kopiuj raport'}
+            {copied ? <IconCheck /> : <IconShare />} {copied ? 'Skopiowano!' : 'Udostępnij wyniki'}
           </button>
           <button onClick={onResetSession}
             className="w-full flex items-center justify-center gap-2 bg-rose-950/50 hover:bg-rose-900/50 border border-rose-900/50 rounded-xl py-3.5 text-sm font-semibold text-rose-400 transition-colors">
@@ -1341,6 +1396,10 @@ function ProfileView({ user, history, players, onUnlinkPlayer, onSignOut, syncMe
   const [myGames, setMyGames] = useState([]);
   const [unlinkingId, setUnlinkingId] = useState(null);
   const [linkedProfileMap, setLinkedProfileMap] = useState({});
+  const [editingPhone, setEditingPhone] = useState(false);
+  const [draftPhone, setDraftPhone] = useState('');
+  const [savingPhone, setSavingPhone] = useState(false);
+  const [phoneSaveError, setPhoneSaveError] = useState('');
 
   const [copied, setCopied] = useState(false);
 
@@ -1348,6 +1407,7 @@ function ProfileView({ user, history, players, onUnlinkPlayer, onSignOut, syncMe
     supabase.from('profiles').select('*').eq('id', user.id).single().then(({ data }) => {
       setProfile(data);
       setDraftName(data?.display_name || user.email?.split('@')[0] || '');
+      setDraftPhone(data?.phone ? formatPhone(data.phone) : '');
     });
     supabase.from('participations').select('*').eq('user_id', user.id).order('session_date', { ascending: false }).then(({ data }) => {
       if (data) setMyGames(data);
@@ -1369,6 +1429,25 @@ function ProfileView({ user, history, players, onUnlinkPlayer, onSignOut, syncMe
     setProfile(prev => ({ ...prev, display_name: draftName.trim() }));
     setEditingName(false);
   };
+
+  const savePhone = async () => {
+    setSavingPhone(true);
+    setPhoneSaveError('');
+    const digits = draftPhone.replace(/\s/g, '') || null;
+    const { error } = await supabase.from('profiles').upsert({ id: user.id, phone: digits });
+    setSavingPhone(false);
+    if (error) {
+      setPhoneSaveError('Nie udało się zapisać numeru. Spróbuj ponownie.');
+      return;
+    }
+    setProfile(prev => ({ ...prev, phone: digits }));
+    setEditingPhone(false);
+  };
+
+  const totalMyGamesBalance = React.useMemo(
+    () => myGames.reduce((sum, g) => sum + (g.net_balance || 0), 0) / 100,
+    [myGames]
+  );
 
   const stats = React.useMemo(() => {
     const map = {};
@@ -1407,10 +1486,10 @@ function ProfileView({ user, history, players, onUnlinkPlayer, onSignOut, syncMe
       setLinkedProfileMap({});
       return;
     }
-    supabase.from('profiles').select('id').in('id', linkedIds).then(({ data }) => {
+    supabase.from('profiles').select('id, display_name, email, phone').in('id', linkedIds).then(({ data }) => {
       const map = {};
-      for (const id of linkedIds) map[id] = false;
-      for (const row of (data || [])) map[row.id] = true;
+      for (const id of linkedIds) map[id] = { exists: false };
+      for (const row of (data || [])) map[row.id] = { exists: true, display_name: row.display_name, email: row.email, phone: row.phone };
       setLinkedProfileMap(map);
     });
   }, [friends]);
@@ -1497,6 +1576,32 @@ function ProfileView({ user, history, players, onUnlinkPlayer, onSignOut, syncMe
               )}
             </div>
             <p className="text-xs text-green-200/50 truncate">{user.email}</p>
+            {!editingPhone ? (
+              <div className="flex items-center gap-1.5 mt-0.5">
+                <p className="text-xs text-green-200/40 truncate">
+                  {profile?.phone ? formatPhone(profile.phone) : 'Brak numeru telefonu'}
+                </p>
+                <button onClick={() => { setEditingPhone(true); setPhoneSaveError(''); }}
+                  className="text-green-800 hover:text-green-400 transition-colors shrink-0">
+                  <IconPencil />
+                </button>
+              </div>
+            ) : (
+              <div className="mt-1 space-y-1">
+                <div className="flex gap-2 items-center">
+                  <input value={draftPhone} onChange={e => { setDraftPhone(formatPhone(e.target.value)); setPhoneSaveError(''); }}
+                    type="tel" inputMode="numeric" maxLength={11} autoFocus placeholder="Numer telefonu"
+                    className="flex-1 bg-black/40 rounded-xl px-3 py-1.5 text-sm text-white border border-green-800 focus:outline-none focus:border-rose-600 transition-colors" />
+                  <button onClick={savePhone} disabled={savingPhone}
+                    className="shrink-0 text-xs bg-rose-800 hover:bg-rose-900 disabled:opacity-40 rounded-xl px-3 py-1.5 font-semibold transition-colors">
+                    {savingPhone ? '...' : 'Zapisz'}
+                  </button>
+                  <button onClick={() => { setEditingPhone(false); setDraftPhone(profile?.phone ? formatPhone(profile.phone) : ''); }}
+                    className="shrink-0 text-green-200/50 hover:text-white transition-colors px-1">✕</button>
+                </div>
+                {phoneSaveError && <p className="text-xs text-rose-400 px-1">{phoneSaveError}</p>}
+              </div>
+            )}
           </div>
           <button onClick={onSignOut}
             className="shrink-0 text-xs text-rose-400 border border-rose-900/50 hover:bg-rose-900/30 px-3 py-2 rounded-xl transition-colors">
@@ -1567,8 +1672,12 @@ function ProfileView({ user, history, players, onUnlinkPlayer, onSignOut, syncMe
             <p className="text-green-200/30 text-xs mt-1">Połącz gracza przez email lub ID w zakładce Gracze.</p>
           </div>
         ) : friends.map(friend => {
-          const profileExists = linkedProfileMap[friend.linked_user_id];
+          const profileInfo = linkedProfileMap[friend.linked_user_id];
+          const profileExists = profileInfo?.exists;
           const lastDate = lastSharedByPlayerId[friend.id];
+          const profileLabel = profileInfo?.display_name
+            ? `${profileInfo.display_name}${profileInfo.email ? ' · ' + profileInfo.email : ''}`
+            : (profileInfo?.email || friend.linked_user_id);
           return (
             <div key={friend.id} className="bg-black/30 border border-green-900 rounded-2xl px-4 py-3 flex items-center gap-3 mb-2">
               <div className="w-9 h-9 rounded-full bg-green-900/70 text-green-200 flex items-center justify-center text-sm font-bold shrink-0">
@@ -1576,7 +1685,7 @@ function ProfileView({ user, history, players, onUnlinkPlayer, onSignOut, syncMe
               </div>
               <div className="flex-1 min-w-0">
                 <p className="font-semibold text-white text-sm truncate">{friend.name}</p>
-                <p className="text-xs text-green-200/50 truncate">{friend.linked_user_id}</p>
+                <p className="text-xs text-green-200/50 truncate">{profileLabel}</p>
                 <p className={`text-xs mt-0.5 ${profileExists ? 'text-emerald-400/80' : 'text-yellow-300/80'}`}>
                   {profileExists ? 'Połączenie aktywne' : 'Nie udało się potwierdzić konta'}
                   {lastDate ? ` · Ostatnia wspólna gra: ${new Date(lastDate).toLocaleDateString('pl-PL')}` : ' · Brak wspólnych gier'}
@@ -1627,6 +1736,15 @@ function ProfileView({ user, history, players, onUnlinkPlayer, onSignOut, syncMe
 
       <div>
         <h2 className="text-lg font-bold text-white tracking-tight mb-3">Moje gry ({myGames.length})</h2>
+        {myGames.length > 0 && (
+          <div className={`rounded-2xl border p-4 mb-3 flex items-center justify-between ${totalMyGamesBalance > 0 ? 'bg-emerald-900/20 border-emerald-800' : totalMyGamesBalance < 0 ? 'bg-red-900/20 border-red-800/60' : 'bg-black/30 border-green-900'}`}>
+            <div>
+              <p className="text-xs text-green-200/60 uppercase tracking-wider font-medium">Łączny bilans</p>
+              <p className="text-xs text-green-200/40 mt-0.5">{myGames.length} {pluralPL(myGames.length, 'gra', 'gry', 'gier')} jako uczestnik</p>
+            </div>
+            <NetBadge value={totalMyGamesBalance} />
+          </div>
+        )}
         {myGames.length === 0 ? (
           <div className="text-center py-10 bg-black/20 rounded-2xl border border-dashed border-green-900">
             <p className="text-green-200/50 text-sm">Brak gier.</p>
@@ -1673,7 +1791,7 @@ const SCREEN_META = {
 const ONBOARDING_KEY = 'poker_onboarding_dismissed';
 
 function App() {
-  const { user, loading: authLoading } = useAuth();
+  const { user, loading: authLoading, emailConfirmed, setEmailConfirmed } = useAuth();
   const [players, setPlayers] = useState(() => loadLS('poker_players', []));
   const [sessionPlayers, setSessionPlayers] = useState(() => loadLS('poker_session', []));
   const [defaultBuyIn, setDefaultBuyIn] = useState(() => loadLS('poker_default_buyin', 50));
@@ -2035,20 +2153,29 @@ function App() {
     input = input.trim();
     let profileId = null;
     const isUUID = /^[0-9a-f-]{36}$/i.test(input);
+    const isEmail = input.includes('@');
+    const isPhone = /^\d[\d\s]{7,10}$/.test(input);
     if (isUUID) {
-      const { data } = await supabase.from('profiles').select('id').eq('id', input).maybeSingle();
+      const { data } = await supabase.from('profiles').select('id, display_name, email').eq('id', input).maybeSingle();
       if (data) profileId = data.id;
-    } else if (input.includes('@')) {
-      const emailNorm = input.trim().toLowerCase();
-      const { data } = await supabase.from('profiles').select('id').eq('email', emailNorm).maybeSingle();
+    } else if (isEmail) {
+      const emailNorm = input.toLowerCase();
+      const { data } = await supabase.from('profiles').select('id, display_name, email').eq('email', emailNorm).maybeSingle();
       if (data) profileId = data.id;
+    } else if (isPhone) {
+      const digits = input.replace(/\s/g, '');
+      const { data } = await supabase.rpc('find_profile_by_phone', { p_phone: digits });
+      if (data && data.length > 0) profileId = data[0].id;
     } else {
-      return 'Podaj adres email (np. jan@example.com) albo ID konta z zakładki Profil.';
+      return 'Podaj adres email, numer telefonu lub ID konta z zakładki Profil.';
     }
     if (!profileId) {
       return isUUID
         ? 'Nie znaleziono konta z tym ID — upewnij się, że znajomy podał ID z Profilu.'
-        : 'Nie znaleziono konta z tym adresem. Znajomy musi mieć założone konto i potwierdzony email (lub skorzystaj z jego ID z Profilu).';
+        : 'Nie znaleziono konta. Znajomy musi mieć konto w Poker Settler z potwierdzonym adresem email.';
+    }
+    if (profileId === user.id) {
+      return 'Nie możesz połączyć gracza z własnym kontem.';
     }
     const prevRow = players.find(p => p.id === playerId);
     setPlayers(prev => prev.map(p => p.id === playerId ? { ...p, linked_user_id: profileId } : p));
@@ -2120,8 +2247,7 @@ function App() {
 
   const handleCalculate = () => {
     const entries = sessionPlayers.flatMap(sp => {
-      const p = playerById[sp.playerId];
-      if (!p) return [];
+      const p = playerById[sp.playerId] ?? { name: `Gracz (${sp.playerId.slice(0, 6)})`, phone: '' };
       return [{ name: p.name, phone: p.phone, cents: plnToCents(parseFloat(sp.cashOut) || 0) - plnToCents(getTotalBuyIn(sp)) }];
     });
     setTransactions(settleDebts(entries));
@@ -2283,6 +2409,7 @@ function App() {
   };
 
   if (authLoading) return <LoadingScreen />;
+  if (emailConfirmed) return <EmailConfirmedScreen onContinue={() => setEmailConfirmed(false)} />;
   if (!user) return <AuthScreen />;
 
   return (
