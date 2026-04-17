@@ -53,7 +53,7 @@ Tables: `profiles`, `players`, `sessions`, `session_players`, `transfers`, `part
 
 Open `index.html` directly in a browser — no server or build step needed. For live editing, any local HTTP server works (e.g. `python3 -m http.server`).
 
-Because Babel transpiles JSX at runtime, errors appear in the browser console with the original JSX source. There are no TypeScript types, linters, or test suites.
+Because Babel transpiles JSX at runtime, errors appear in the browser console with the original JSX source. There is no TypeScript or project linter. Settlement helpers in `lib/settlement.js` are covered by `npm test` (`test/settlement.test.js`).
 
 ## Adding Features
 

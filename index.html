@@ -2229,19 +2229,19 @@ function App() {
     const prevRow = players.find(p => p.id === playerId);
     const linkedUserId = prevRow?.linked_user_id || null;
     setPlayers(prev => prev.map(p => p.id === playerId ? { ...p, linked_user_id: null } : p));
-    if (!user) return;
+    if (!user) return true;
     const { error: rpcErr } = await supabase.rpc('remove_friend_player_link', { p_player_id: playerId });
     if (rpcErr) {
       if (!isFriendLinkRpcMissing(rpcErr)) {
         if (prevRow) setPlayers(prev => prev.map(p => p.id === playerId ? prevRow : p));
         notifyCloudFailure(rpcErr.message);
-        return;
+        return false;
       }
       const { error } = await supabase.from('players').update({ linked_user_id: null }).eq('id', playerId);
       if (error && prevRow) {
         setPlayers(prev => prev.map(p => p.id === playerId ? prevRow : p));
         notifyCloudFailure(error.message);
-        return;
+        return false;
       }
       if (linkedUserId && user?.id) {
         const { error: revErr } = await supabase.from('players').delete().eq('owner_id', linkedUserId).eq('linked_user_id', user.id);
@@ -2249,10 +2249,16 @@ function App() {
       }
     }
     void refreshCloudData();
+    return true;
   };
   const removePlayer = async id => {
     const prevP = players;
     const prevSp = sessionPlayers;
+    const row = players.find(p => p.id === id);
+    if (user && row?.linked_user_id) {
+      const ok = await unlinkPlayer(id);
+      if (!ok) return;
+    }
     setPlayers(prev => prev.filter(p => p.id !== id));
     setSessionPlayers(prev => prev.filter(sp => sp.playerId !== id));
     if (!user) return;
