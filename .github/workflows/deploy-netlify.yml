@@ -15,6 +15,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Validate Netlify secrets
+        run: |
+          if [ -z "${{ secrets.NETLIFY_AUTH_TOKEN }}" ]; then
+            echo "Missing secret: NETLIFY_AUTH_TOKEN"
+            echo "Add it in GitHub → Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+          if [ -z "${{ secrets.NETLIFY_SITE_ID }}" ]; then
+            echo "Missing secret: NETLIFY_SITE_ID"
+            echo "Add it in GitHub → Settings → Secrets and variables → Actions."
+            exit 1
+          fi
       - run: npm install -g netlify-cli
       - run: netlify deploy --prod --dir . --message "${{ github.sha }}"
         env:
