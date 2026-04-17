@@ -8,9 +8,9 @@
 
 ## 1. Czym jest aplikacja
 
-**Poker Settler** — polskojęzyczna PWA do rozliczania puli po grze w pokera: buy-iny, cash-outy, minimalna lista przelewów (`settleDebts` w `lib/settlement.js`).
+**Poker Settler** — polskojęzyczna PWA do rozliczania puli po grze w pokera: buy-iny, cash-outy, minimalna lista przelewów (`settleDebts` w `src/lib/settlement.ts`).
 
-- **UI:** jeden plik `index.html` (React 18 + Babel Standalone + Tailwind z CDN), logika w jednym bloku `<script type="text/babel">`.
+- **UI:** Vite + React 18 + TypeScript — główny komponent w `src/App.tsx` (docelowo podział na moduły); build statyczny do `dist/`.
 - **Backend:** Supabase (Auth + Postgres + Realtime). Kwoty w bazie: **centy (integer)**; w UI: PLN float — konwersja przy granicy (`plnToCents` / odczyt).
 - **Stan:** React w `App`, props w dół; persystencja: **localStorage + Supabase** (dual-write przy zalogowanym użytkowniku).
 
@@ -82,8 +82,8 @@ Skrypt **`scripts/diagnose.mjs`** (wymaga `SUPABASE_PAT` z dashboardu Supabase) 
 | Stan | Opis |
 |------|------|
 | **Zrobione (ok. Faza 1)** | Migracje 014–018, telemetria, twardniejszy auth/realtime w kliencie, dokumentacja, `diagnose.mjs`; wiele hotfixów w `index.html` (m.in. reconnect, naprawy FK, idempotent unlink). |
-| **Plan (Faza 2)** | Vite + TypeScript, podział `index.html` na moduły, centralny warstwa sync — `docs/PLAN.md` sekcja 4. |
-| **Nie obiecuj w kodzie** | Dopóki nie ma buildu: nadal „open `index.html` / `python -m http.server`” dla dev; Netlify bez npm build. |
+| **Plan (Faza 2 — w toku)** | Szkielet Vite + TS jest; kolejny krok: rozbicie `App.tsx`, warstwa `sync/`, typy Supabase — `docs/PLAN.md` sekcja 4. |
+| **Dev / deploy** | Lokalnie: `npm run dev`; produkcja: `npm run build` → Netlify publikuje `dist/` (patrz `netlify.toml`). |
 
 ---
 
@@ -99,7 +99,7 @@ Skrypt **`scripts/diagnose.mjs`** (wymaga `SUPABASE_PAT` z dashboardu Supabase) 
 
 1. Przeczytaj **`CLAUDE.md`** (architektura plików) + **ten plik**.
 2. Przy zmianach w bazie: znajdź migrację lub dodaj **nowy numerowany plik** w `supabase/migrations/`; opisz w `README.md` jeśli zmieniasz kolejność wdrożeń.
-3. Logika rozliczeń: **`lib/settlement.js`** + `npm test` — nie duplikuj formuł w UI.
+3. Logika rozliczeń: **`src/lib/settlement.ts`** + `npm test` (Vitest) — nie duplikuj formuł w UI.
 4. Po zmianach w sync: smoke na **dwóch urządzeniach** lub przynajmniej dwie sesje przeglądarki + sprawdzenie `client_logs` w SQL.
 
 ---

@@ -4,8 +4,8 @@
 > (człowiek lub AI) mógł później dołączyć i rozumieć *dlaczego* kod wygląda
 > tak jak wygląda.
 
-**Status:** plan do akceptacji przez właściciela (`majchrzak10`).
-**Branch roboczy:** `claude/fix-poker-sync-QSeli`.
+**Status:** Faza 2 — szkielet **Vite + TypeScript** wdrożony na `main` (build → `dist/`); dalszy podział `App.tsx` i warstwa `sync/` — do zrobienia.
+**Branch roboczy:** `claude/fix-poker-sync-QSeli` (historyczny; praca na `main`).
 **Data utworzenia:** 2026-04-17.
 
 ---

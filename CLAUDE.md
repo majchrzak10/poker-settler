@@ -6,57 +6,56 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-**Poker Settler** — single-page Polish-language PWA for settling poker debts among friends. Main UI is `index.html`; shared settlement helpers live in `lib/settlement.js` (also covered by `npm test`).
+**Poker Settler** — Polish-language PWA for settling poker debts among friends. UI is **Vite + React + TypeScript** (`src/`, entry `src/main.tsx`). Shared settlement helpers live in **`src/lib/settlement.ts`** (covered by **`npm test`** / Vitest).
 
 ## Architecture
 
-Single `index.html` file with no build step. React, Babel, Tailwind, and Supabase are all loaded via CDN. JSX is transpiled in the browser by Babel Standalone. `lib/settlement.js` exposes `plnToCents`, `settleDebts`, and `pluralPL` on `window.PokerSettlerCore` before the Babel bundle runs.
+```
+index.html              ← Vite HTML shell (root)
+src/
+├── main.tsx            ← createRoot, PWA head inject, StrictMode
+├── App.tsx             ← cała aplikacja (duży plik; docelowo podział na features/)
+├── config.ts           ← Supabase URL + anon key (import.meta.env.VITE_*)
+├── index.css           ← Tailwind + global styles
+├── pwa.ts              ← manifest + icons (inline SVG base64)
+└── lib/
+    └── settlement.ts   ← plnToCents, settleDebts, pluralPL, formatPln
+```
 
-```
-index.html
-├── <head>      — CDN imports, PWA manifest + icons (single base64, injected by script), Tailwind config
-├── lib/settlement.js — plnToCents, settleDebts, pluralPL
-└── <script type="text/babel">
-    ├── Supabase client init (SUPABASE_URL, SUPABASE_KEY)
-    ├── Utils: generateId, loadLS, getTotalBuyIn, formatDate, formatPhone (settlement utils from PokerSettlerCore)
-    ├── Icons — inline SVG components
-    ├── useAuth — Supabase auth hook
-    ├── AuthScreen — login / registration
-    ├── PlayersTab — player CRUD, session add, account linking
-    ├── SessionTab — current session: buy-ins per player, total pot
-    ├── SettlementTab — cash-out entry, balance check, debt calculation, save
-    ├── HistoryTab — archive + leaderboard (rankings by period)
-    ├── ProfileView — user profile, per-user stats, localStorage→cloud migration
-    └── App — root: all state lives here, syncs to localStorage + Supabase
-```
+- **Build:** `npm run build` → `dist/` (Netlify publish directory).
+- **Dev:** `npm run dev` (Vite HMR).
+- **Styling:** Tailwind via PostCSS (`tailwind.config.js`).
+- **Backend:** Supabase (`@supabase/supabase-js`); client created once in `App.tsx` (re-export `supabase`).
 
 ## State & Storage
 
-State is managed in `App` and passed down as props. All state is dual-persisted:
+State is managed in `App` and passed down as props. Dual persistence:
 
-- **localStorage** — instant offline access (`poker_players`, `poker_session`, `poker_default_buyin`, `poker_sessions_history`)
-- **Supabase** — cloud sync when user is logged in (loaded on auth, written on every mutation)
+- **localStorage** — instant offline access (`poker_players`, `poker_session`, etc.)
+- **Supabase** — cloud sync when logged in
 
-Monetary values in Supabase are stored as **integer cents** (×100). The UI works in PLN floats; convert at the boundary.
+Monetary values in Supabase: **integer cents**. UI: PLN floats; convert at the boundary (`plnToCents`).
 
 ## Supabase Schema
 
-Tables: `profiles`, `players`, `sessions`, `session_players`, `transfers`, `participations`
-
-- `players.linked_user_id` — links a player record to a registered user account (for cross-account stats)
-- `participations` — denormalised view of a user's own game history, populated when a linked player is in a finished session
+See `docs/CONTEXT.md` for tables and migration overview.
 
 ## Key Algorithms
 
-- **`settleDebts(entries)`** — greedy debt minimisation: sorts creditors/debtors descending, matches largest pairs first, minimises transfer count
-- **`pluralPL(n, one, few, many)`** — correct Polish plural forms (1 gra / 2–4 gry / 5+ gier)
+- **`settleDebts(entries)`** — greedy debt minimisation (`src/lib/settlement.ts`)
+- **`pluralPL(n, one, few, many)`** — Polish plural forms
 
 ## Running / Editing
 
-Open `index.html` directly in a browser — no server or build step needed. For live editing, any local HTTP server works (e.g. `python3 -m http.server`).
+```bash
+npm install          # pierwszy raz
+npm run dev          # http://localhost:5173
+npm run build        # dist/
+npm test             # Vitest — settlement
+```
 
-Because Babel transpiles JSX at runtime, errors appear in the browser console with the original JSX source. There is no TypeScript or project linter. Settlement helpers in `lib/settlement.js` are covered by `npm test` (`test/settlement.test.js`).
+`App.tsx` is still marked `// @ts-nocheck` until types are tightened incrementally.
 
 ## Adding Features
 
-All component code is in one `<script type="text/babel">` block. To add a new tab, add an entry to the `TABS` array and a corresponding component. To add a new Supabase operation, call `supabase.from(...)` inline — the pattern throughout the file is: optimistic local state update first, then async Supabase write.
+Prefer new files under `src/features/<name>/` and import into `App.tsx` rather than growing the monolith further.

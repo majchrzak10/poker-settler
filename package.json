@@ -2,9 +2,12 @@
   "name": "poker-cursor",
   "version": "1.0.0",
   "description": "Aplikacja PWA do rozliczania pokerowych sesji ze znajomymi. Wpisz buy-iny, wpisz cash-outy — dostaniesz minimalną listę przelewów.",
-  "main": "index.js",
+  "type": "module",
   "scripts": {
-    "test": "node --test test/settlement.test.js"
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest run"
   },
   "repository": {
     "type": "git",
@@ -13,9 +16,24 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "commonjs",
   "bugs": {
     "url": "https://github.com/majchrzak10/poker-settler/issues"
   },
-  "homepage": "https://github.com/majchrzak10/poker-settler#readme"
+  "homepage": "https://github.com/majchrzak10/poker-settler#readme",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.49.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.7.3",
+    "vite": "^6.0.7",
+    "vitest": "^3.0.4"
+  }
 }

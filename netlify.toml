@@ -1,14 +1,11 @@
-# Poker Settler — statyczna PWA (index.html, lib/). Netlify publikuje cały katalog główny.
+# Poker Settler — Vite build → katalog dist/ (statyczna PWA).
 #
-# Wdrożenie produkcyjne (zalecane):
-#   Netlify Dashboard → Add new site → Import an existing project → GitHub → to repozytorium
-#   Branch: main | Build command: (puste) | Publish directory: . (kropka)
-#   Po połączeniu każdy push na main uruchamia deploy z tego pliku.
-#
-# Alternatywa: netlify deploy --prod --dir . (CLI) albo workflow Actions (ręczny trigger).
+# Netlify Dashboard: Build command = npm run build | Publish directory = dist
+# Opcjonalnie: zmienne VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY (nadpisują domyślne z src/config.ts).
 
 [build]
-  publish = "."
+  command = "npm run build"
+  publish = "dist"
 
 [[headers]]
   for = "/*"

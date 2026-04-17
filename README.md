@@ -4,12 +4,12 @@ Aplikacja PWA do rozliczania pokerowych sesji ze znajomymi. Wpisz buy-iny, wpisz
 
 ## Architektura
 
-Interfejs to **`index.html`** (React z CDN, Babel w przeglądarce) oraz **`lib/settlement.js`** — współdzielona logika rozliczeń (ładowana przed głównym skryptem). **Nie ma kroku build ani `npm install` do uruchomienia aplikacji.** W repozytorium jest `package.json` wyłącznie pod **`npm test`** (testy jednostkowe logiki w Node).
+Aplikacja buduje się **Vite** (`npm run build` → katalog **`dist/`**). Kod UI: **React 18 + TypeScript** w `src/` (główny plik: `src/App.tsx`; logika rozliczeń: `src/lib/settlement.ts`). Wymagany **Node.js** do developmentu i builda.
 
 | Warstwa | Technologia |
 |---------|-------------|
-| UI | React 18 (CDN) + Babel Standalone (transpilacja JSX w przeglądarce) |
-| Styl | Tailwind CSS (CDN) |
+| UI | React 18 + Vite (bundler) |
+| Styl | Tailwind CSS (PostCSS) |
 | Backend | Supabase (auth + PostgreSQL) |
 | Offline | localStorage (fallback gdy brak konta) |
 
@@ -18,11 +18,9 @@ Kwoty w Supabase są przechowywane jako **centy (integer)**. UI pracuje na PLN (
 ## Konfiguracja Supabase
 
 1. Utwórz projekt na [supabase.com](https://supabase.com).
-2. W `index.html` (stałe `SUPABASE_URL` / `SUPABASE_KEY` na początku skryptu Babel) ustaw swoje dane:
-   ```js
-   const SUPABASE_URL = 'https://TWOJ_PROJEKT.supabase.co';
-   const SUPABASE_KEY = 'sb_publishable_...';  // anon/public key
-   ```
+2. Skonfiguruj klienta Supabase (domyślnie wartości są w `src/config.ts`):
+   - **Lokalnie / Netlify:** ustaw zmienne środowiskowe `VITE_SUPABASE_URL` i `VITE_SUPABASE_ANON_KEY` (anon / publishable key — ten sam co wcześniej w `index.html`).
+   - Bez zmiennych build użyje placeholderów z `config.ts` (wygodne na start; w produkcji lepiej nadpisać env).
 3. Uruchom migracje **po kolei** w **SQL Editor** (Supabase Dashboard), pliki z `supabase/migrations/`:
    `000` … `019` (m.in. **007** RLS, **008** Realtime, **009** RPC znajomi, **010–012** zaproszenia, **013** email, **014** pełna publikacja Realtime, **015** backfill profil/self-player, **016** `client_logs`, **017** FK `session_players` → `SET NULL` przy usuwaniu gracza, **018** idempotentne `remove_friend_player_link`, **019** unikalny numer telefonu wśród graczy u danego właściciela).
    Dla starszych baz szczególnie ważne są: **003** (trigger profilu), **005** (backfill profili), **009/010/012**, **013**, **014** (sync między urządzeniami), **015–019** (spójność kont, usuwanie / odpinanie, telefony).
@@ -31,32 +29,30 @@ Kwoty w Supabase są przechowywane jako **centy (integer)**. UI pracuje na PLN (
 
 ## Lokalny development
 
-Otwórz plik bezpośrednio w przeglądarce lub uruchom prosty serwer HTTP:
-
 ```bash
-python3 -m http.server 8080
-# → http://localhost:8080
+npm install
+npm run dev
+# → http://localhost:5173 (Vite)
 ```
 
-Błędy JSX widać w konsoli przeglądarki (Babel transpiluje w runtime).
-
-## Testy (opcjonalnie, Node.js)
+## Testy
 
 ```bash
 npm test
 ```
 
-Uruchamia `node --test` na [test/settlement.test.js](test/settlement.test.js) (funkcje z [lib/settlement.js](lib/settlement.js)).
+Uruchamia **Vitest** na [src/lib/settlement.test.ts](src/lib/settlement.test.ts) (logika z [src/lib/settlement.ts](src/lib/settlement.ts)).
 
 ## Deploy (Netlify)
 
-W repozytorium jest **`netlify.toml`** z `publish = "."` — katalog główny (m.in. `index.html`) trafia na hosting **bez kroku build**.
+W repozytorium jest **`netlify.toml`**: **`npm run build`** → publikacja katalogu **`dist/`**.
 
 **Checklist w Netlify (Dashboard → site → Build & deploy):**
 
-1. **Continuous deployment** — repozytorium GitHub połączone, produkcja = gałąź **`main`**.
-2. **Build settings** — *Build command* puste (Netlify czyta `netlify.toml`), *Publish directory* **`.`** lub puste (root).
-3. Po zapisie ustawień każdy **`git push origin main`** powinien pokazać nowy deploy w zakładce **Deploys**.
+1. **Continuous deployment** — repozytorium GitHub, gałąź **`main`**.
+2. **Build settings** — *Build command* `npm run build`, *Publish directory* **`dist`** (może nadpisać UI; plik `netlify.toml` też to ustawia).
+3. **Environment variables (opcjonalnie):** `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` — jeśli nie chcesz polegać na domyślnych wartościach w `src/config.ts`.
+4. Po zapisie każdy **`git push origin main`** uruchamia build i deploy.
 
 ### Netlify podpięte do GitHuba (zalecane)
 
@@ -68,15 +64,12 @@ git commit -m "Krótki opis zmian"
 git push origin main
 ```
 
-### Inaczej
+### Inaczej (CLI)
 
 ```bash
-# Przeciągnij katalog na netlify.com/drop
-# lub przez CLI:
-netlify deploy --prod --dir .
+npm run build
+netlify deploy --prod --dir dist
 ```
-
-Nie ma kroku budowania — deploy to po prostu opublikowanie plików statycznych.
 
 ## Smoke test po wdrożeniu
 
@@ -100,10 +93,16 @@ Nie ma kroku budowania — deploy to po prostu opublikowanie plików statycznych
 ## Struktura katalogów
 
 ```
-index.html                        ← UI React + integracja Supabase
-lib/settlement.js                 ← plnToCents, settleDebts, pluralPL (wspólne z testami)
-test/settlement.test.js          ← testy Node
-CLAUDE.md                         ← wskazówki dla Claude Code
+index.html                        ← punkt wejścia Vite
+src/
+  main.tsx                        ← mount React + PWA
+  App.tsx                         ← aplikacja (Supabase, zakładki)
+  lib/settlement.ts               ← rozliczenia (wspólne z testami)
+  lib/settlement.test.ts          ← Vitest
+vite.config.ts
+tailwind.config.js
+CLAUDE.md                         ← wskazówki dla AI / Claude Code
+docs/CONTEXT.md                   ← handoff kontekstowy
 supabase/
   migrations/
     000_profiles_players_participations.sql  ← tabele bazowe + RLS

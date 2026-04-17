@@ -1,0 +1,2790 @@
+// @ts-nocheck
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { createClient } from '@supabase/supabase-js';
+import { plnToCents, settleDebts, pluralPL, formatPln } from './lib/settlement';
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config';
+
+export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+const FAILED_CLOUD_SAVES_KEY = 'poker_failed_cloud_saves';
+const SYNC_META_KEY = 'poker_sync_meta';
+
+// --- Telemetria klienta (migracja 016_client_logs). ---
+// Fire-and-forget — nigdy nie blokuje UI i nie rzuca wyjątku.
+const CLIENT_LOG_SESSION_KEY = 'poker_client_log_session';
+let _cachedLogSessionId = null;
+function getLogSessionId() {
+  if (_cachedLogSessionId) return _cachedLogSessionId;
+  try {
+    let v = sessionStorage.getItem(CLIENT_LOG_SESSION_KEY);
+    if (!v) {
+      v = (window.crypto?.randomUUID?.() || (Date.now().toString(36) + Math.random().toString(36).slice(2)));
+      sessionStorage.setItem(CLIENT_LOG_SESSION_KEY, v);
+    }
+    _cachedLogSessionId = v;
+    return v;
+  } catch (_) { return null; }
+}
+async function logClientEvent(level, event, context) {
+  try {
+    const sessionRes = await supabase.auth.getSession();
+    const user_id = sessionRes?.data?.session?.user?.id || null;
+    if (!user_id) return; // RLS wymaga authenticated; niezalogowany nie ma sensu logować tu.
+    const device = (typeof navigator !== 'undefined' && navigator.userAgent || '').slice(0, 200);
+    const safeContext = (context && typeof context === 'object' && !Array.isArray(context))
+      ? context
+      : { value: String(context ?? '') };
+    const payload = {
+      user_id,
+      session_id: getLogSessionId(),
+      level: (level === 'warn' || level === 'info') ? level : 'error',
+      event: String(event || 'unknown').slice(0, 120),
+      context: safeContext,
+      device,
+      app_version: (window.POKER_APP_VERSION || null)
+    };
+    const { error } = await supabase.from('client_logs').insert(payload);
+    if (error) { try { console.warn('client_logs insert failed:', error.message); } catch (_) {} }
+  } catch (e) {
+    try { console.warn('logClientEvent threw:', e?.message || e); } catch (_) {}
+  }
+}
+window.logClientEvent = logClientEvent;
+
+window.addEventListener('error', ev => {
+  try {
+    logClientEvent('error', 'window_error', {
+      message: ev?.error?.message || ev?.message || 'unknown',
+      stack: (ev?.error?.stack || '').slice(0, 800),
+      filename: ev?.filename, lineno: ev?.lineno, colno: ev?.colno
+    });
+  } catch (_) {}
+});
+window.addEventListener('unhandledrejection', ev => {
+  try {
+    const r = ev?.reason;
+    logClientEvent('error', 'unhandled_rejection', {
+      message: r?.message || String(r || 'unknown'),
+      stack: (r?.stack || '').slice(0, 800)
+    });
+  } catch (_) {}
+});
+// --- koniec telemetrii ---
+
+function buildSessionRpcArgs(sessionRow, sessionPlayersRows, transferRows, participationRows) {
+  return {
+    p_session_id: sessionRow.id,
+    p_owner_id: sessionRow.owner_id,
+    p_played_at: sessionRow.played_at,
+    p_total_pot: sessionRow.total_pot,
+    p_session_players: (sessionPlayersRows || []).map(r => ({
+      player_id: r.player_id,
+      player_name: r.player_name,
+      total_buy_in: r.total_buy_in,
+      cash_out: r.cash_out,
+    })),
+    p_transfers: (transferRows || []).map(r => ({
+      from_name: r.from_name,
+      to_name: r.to_name,
+      amount: r.amount,
+    })),
+    p_participations: (participationRows || []).map(r => ({
+      user_id: r.user_id,
+      player_name: r.player_name,
+      total_buy_in: r.total_buy_in,
+      cash_out: r.cash_out,
+      session_date: r.session_date,
+      total_pot: r.total_pot,
+    })),
+  };
+}
+
+function isRpcMissingError(err) {
+  const m = (err?.message || '') + (err?.details || '');
+  return err?.code === 'PGRST202' || err?.code === '42883' || /save_session_atomic|update_session_atomic|function.*does not exist/i.test(m);
+}
+
+function isFriendLinkRpcMissing(err) {
+  const m = (err?.message || '') + (err?.details || '');
+  return err?.code === 'PGRST202' || err?.code === '42883' || /complete_friend_player_link|remove_friend_player_link|function.*does not exist/i.test(m);
+}
+
+/** Tabela live_session_state nie wdrożona (migracja 002) — PostgREST zwraca m.in. PGRST205; komunikat bywa obcięty („public.live…”). */
+function isMissingLiveSessionTableError(err) {
+  if (!err) return false;
+  const m = `${err.message || ''} ${err.details || ''} ${err.hint || ''}`;
+  if (err.code === 'PGRST205') return /live_session|public\.live|schema cache/i.test(m);
+  return /live_session_state|public\.live_session|Could not find the table|schema cache|does not exist/i.test(m) && /live_session|public\.live/i.test(m);
+}
+
+/** Czyści zapisany w LS błąd sync (stary komunikat o braku tabeli live_session). */
+function sanitizeSyncMeta(meta) {
+  if (!meta?.lastError) return meta;
+  const e = meta.lastError;
+  if (/PGRST205|schema cache|Could not find the table/i.test(e) && /live_session|public\.live\b/i.test(e)) {
+    return { ...meta, lastError: null };
+  }
+  return meta;
+}
+
+function summarizeSyncError(errMsg) {
+  const msg = (errMsg || '').toLowerCase();
+  if (!msg) return 'Błąd synchronizacji.';
+  if (msg.includes('network') || msg.includes('failed to fetch')) return 'Brak połączenia z internetem. Sprawdź sieć i spróbuj ponownie.';
+  if (msg.includes('jwt') || msg.includes('auth') || msg.includes('token')) return 'Sesja wygasła lub jest nieprawidłowa. Zaloguj się ponownie.';
+  if (msg.includes('permission') || msg.includes('rls') || msg.includes('policy')) return 'Brak uprawnień do tej operacji.';
+  if (msg.includes('timeout')) return 'Serwer odpowiada zbyt długo. Spróbuj ponownie za chwilę.';
+  if (msg.includes('session_players_player_id_fkey') || (msg.includes('session_players') && msg.includes('foreign key'))) {
+    return 'Sesja zawiera gracza, który nie istnieje już w chmurze. Wybierz graczy ponownie z aktualnej listy.';
+  }
+  if (msg.includes('does not exist') || msg.includes('schema cache') || msg.includes('pgrst')) return 'Brakuje migracji w bazie danych. Uruchom najnowsze skrypty SQL.';
+  return 'Wystąpił problem z synchronizacją danych.';
+}
+
+function formatSyncStamp(isoString) {
+  if (!isoString) return 'brak';
+  const dt = new Date(isoString);
+  if (Number.isNaN(dt.getTime())) return 'brak';
+  return dt.toLocaleString('pl-PL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+
+function isSessionPlayerFkError(err) {
+  const msg = `${err?.message || ''} ${err?.details || ''}`.toLowerCase();
+  return msg.includes('session_players_player_id_fkey') || (msg.includes('session_players') && msg.includes('foreign key'));
+}
+
+function useAuth() {
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [emailConfirmed, setEmailConfirmed] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+    const searchParams = new URLSearchParams(window.location.search);
+    const type = hashParams.get('type') || searchParams.get('type');
+    const hasToken = hashParams.get('access_token') || searchParams.get('token_hash') || searchParams.get('code');
+    if (hasToken && (type === 'signup' || type === 'email_confirmation')) {
+      window.history.replaceState({}, '', window.location.pathname);
+      return true;
+    }
+    return false;
+  });
+  useEffect(() => {
+    let active = true;
+    const applySession = session => {
+      if (!active) return;
+      setUser(session?.user ?? null);
+      setLoading(false);
+    };
+    const syncSessionFromStorage = async () => {
+      const { data, error } = await supabase.auth.getSession();
+      if (error) console.warn('auth.getSession', error.message || error);
+      applySession(data?.session ?? null);
+    };
+    syncSessionFromStorage();
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_OUT') {
+        setUser(null);
+        setLoading(false);
+        return;
+      }
+      applySession(session);
+    });
+    const onFocus = () => { syncSessionFromStorage(); };
+    const onVisibility = () => {
+      if (!document.hidden) syncSessionFromStorage();
+    };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      active = false;
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibility);
+      subscription.unsubscribe();
+    };
+  }, []);
+  return { user, loading, emailConfirmed, setEmailConfirmed };
+}
+
+// ─── Utils ───────────────────────────────────────────────────────────────────
+
+function generateId() {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+}
+
+function loadLS(key, fallback) {
+  try {
+    const item = localStorage.getItem(key);
+    return item ? JSON.parse(item) : fallback;
+  } catch { return fallback; }
+}
+
+function saveLS(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {}
+}
+
+function useDebouncedLocalStorage(key, value, delay = 220) {
+  useEffect(() => {
+    const timer = setTimeout(() => saveLS(key, value), delay);
+    return () => clearTimeout(timer);
+  }, [key, value, delay]);
+}
+
+function normalizeDraftSessionPlayers(rows) {
+  return (rows || []).map(sp => ({
+    playerId: sp.playerId,
+    buyIns: Array.isArray(sp.buyIns) ? sp.buyIns.map(n => Number(n) || 0) : [],
+    cashOut: typeof sp.cashOut === 'string' ? sp.cashOut : String(sp.cashOut ?? ''),
+  }));
+}
+
+function buildDraftHash(defaultBuyIn, sessionPlayers) {
+  return JSON.stringify({
+    defaultBuyIn: Number(defaultBuyIn) || 0,
+    sessionPlayers: normalizeDraftSessionPlayers(sessionPlayers),
+  });
+}
+
+/** Porównanie timestamptz ISO z Supabase (ms). */
+function isoToMs(iso) {
+  if (!iso) return 0;
+  const t = new Date(iso).getTime();
+  return Number.isNaN(t) ? 0 : t;
+}
+
+function getTotalBuyIn(sp) {
+  return sp.buyIns.reduce((sum, b) => sum + b, 0);
+}
+
+function formatDate(isoDate) {
+  return new Date(isoDate).toLocaleDateString('pl-PL', {
+    weekday: 'short', day: 'numeric', month: 'short', year: 'numeric'
+  });
+}
+
+function formatPhone(raw) {
+  const digits = raw.replace(/\D/g, '').slice(0, 9);
+  return digits.replace(/(\d{3})(?=\d)/g, '$1 ');
+}
+
+/** Same 9 cyfr co w formatPhone — do wykrywania duplikatów numeru u jednego właściciela. */
+function normalizePhoneDigits(raw) {
+  if (raw == null) return '';
+  return String(raw).replace(/\D/g, '').slice(0, 9);
+}
+
+function mapSharedParticipations(rows) {
+  const bySession = new Map();
+  for (const row of rows || []) {
+    if (!row?.session_id) continue;
+    const existing = bySession.get(row.session_id);
+    if (!existing || new Date(row.session_date).getTime() > new Date(existing.session_date).getTime()) {
+      bySession.set(row.session_id, row);
+    }
+  }
+  return Array.from(bySession.values()).map(r => {
+    const totalBuyIn = (r.total_buy_in || 0) / 100;
+    const cashOut = (r.cash_out || 0) / 100;
+    return {
+      id: `shared:${r.session_id}`,
+      date: r.session_date,
+      totalPot: (r.total_pot || 0) / 100,
+      players: [{
+        id: `shared-player:${r.id}`,
+        name: r.player_name || 'Połączony gracz',
+        phone: '',
+        totalBuyIn,
+        cashOut,
+        netBalance: cashOut - totalBuyIn,
+      }],
+      transfers: [],
+      shared: true,
+      sourceSessionId: r.session_id,
+      sharedNote: 'Twój wynik w sesji u innego gracza — pełna lista i przelewy są u organizatora.',
+    };
+  });
+}
+
+// ─── Icons (inline SVG) ───────────────────────────────────────────────────────
+
+const IconUsers = () => (
+  <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
+    <path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+  </svg>
+);
+const IconPlay = () => (
+  <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+    <circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/>
+  </svg>
+);
+const IconCalc = () => (
+  <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+    <rect x="4" y="2" width="16" height="20" rx="2"/><line x1="8" y1="6" x2="16" y2="6"/>
+    <line x1="8" y1="10" x2="16" y2="10"/><line x1="8" y1="14" x2="12" y2="14"/>
+  </svg>
+);
+const IconTrophy = () => (
+  <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+    <polyline points="8 21 12 21 16 21"/><line x1="12" y1="17" x2="12" y2="21"/>
+    <path d="M7 4H4a2 2 0 0 0-2 2v1c0 4 3 7 7 8"/><path d="M17 4h3a2 2 0 0 1 2 2v1c0 4-3 7-7 8"/>
+    <path d="M7 4a5 5 0 0 0 10 0"/>
+  </svg>
+);
+const IconPlus = ({ size = 16 }) => (
+  <svg width={size} height={size} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+    <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+  </svg>
+);
+const IconMinus = ({ size = 18 }) => (
+  <svg width={size} height={size} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+    <line x1="5" y1="12" x2="19" y2="12"/>
+  </svg>
+);
+const IconX = ({ size = 16 }) => (
+  <svg width={size} height={size} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+    <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+  </svg>
+);
+const IconCheck = ({ size = 16 }) => (
+  <svg width={size} height={size} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+    <polyline points="20 6 9 17 4 12"/>
+  </svg>
+);
+const IconArrow = () => (
+  <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+    <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
+  </svg>
+);
+const IconChevDown = () => (
+  <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+    <polyline points="6 9 12 15 18 9"/>
+  </svg>
+);
+const IconChevUp = () => (
+  <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+    <polyline points="18 15 12 9 6 15"/>
+  </svg>
+);
+const IconSave = () => (
+  <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+    <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+    <polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>
+  </svg>
+);
+const IconRefresh = () => (
+  <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+    <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
+    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+  </svg>
+);
+const IconCopy = () => (
+  <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+  </svg>
+);
+const IconShare = () => (
+  <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+    <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
+    <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+  </svg>
+);
+const IconPhone = () => (
+  <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+    <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 13a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 2.22h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 9.91a16 16 0 0 0 6.16 6.16l.91-.91a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/>
+  </svg>
+);
+const IconTrash = () => (
+  <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+    <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+  </svg>
+);
+const IconUserPlus = () => (
+  <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+    <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+    <circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/>
+    <line x1="23" y1="11" x2="17" y2="11"/>
+  </svg>
+);
+const IconTrend = () => (
+  <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+    <polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/>
+    <polyline points="17 6 23 6 23 12"/>
+  </svg>
+);
+const IconClock = () => (
+  <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+    <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+  </svg>
+);
+const IconPencil = () => (
+  <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+  </svg>
+);
+const IconPlusCircle = () => (
+  <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+    <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/>
+    <line x1="8" y1="12" x2="16" y2="12"/>
+  </svg>
+);
+const IconUser = () => (
+  <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
+  </svg>
+);
+
+// ─── Auth ─────────────────────────────────────────────────────────────────────
+
+function LoadingScreen() {
+  return (
+    <div className="min-h-screen bg-green-950 flex items-center justify-center">
+      <p className="text-green-200/50 text-sm">Ładowanie...</p>
+    </div>
+  );
+}
+
+function EmailConfirmedScreen({ onContinue }) {
+  return (
+    <div className="min-h-screen bg-green-950 flex items-center justify-center p-4">
+      <div className="w-full max-w-sm text-center space-y-6">
+        <div className="text-6xl">✅</div>
+        <div>
+          <h2 className="text-2xl font-bold text-white">Konto aktywowane!</h2>
+          <p className="text-green-200/60 text-sm mt-2">
+            Twój adres email został potwierdzony. Możesz się teraz zalogować.
+          </p>
+        </div>
+        <button onClick={onContinue}
+          className="w-full bg-rose-800 hover:bg-rose-900 rounded-xl py-3 text-sm font-semibold transition-colors">
+          Przejdź do logowania
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function AuthScreen() {
+  const [mode, setMode] = useState('login');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [passwordConfirm, setPasswordConfirm] = useState('');
+  const [name, setName] = useState('');
+  const [regPhone, setRegPhone] = useState('');
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const handleLogin = async e => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+    const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
+    if (error) {
+      const raw = (error.message || '').toLowerCase();
+      if (raw.includes('email not confirmed') || raw.includes('not confirmed')) {
+        setError('Konto nie jest jeszcze aktywne. Otwórz mail z linkiem aktywacyjnym, potwierdź adres, a następnie zaloguj się ponownie.');
+      } else if (raw.includes('invalid login credentials') || raw.includes('invalid credentials')) {
+        setError('Nieprawidłowy email lub hasło.');
+      } else {
+        setError(error.message || 'Nie udało się zalogować.');
+      }
+      setLoading(false);
+      return;
+    }
+    setLoading(false);
+  };
+
+  const handleRegister = async e => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+    setSuccess('');
+    if (password !== passwordConfirm) {
+      setError('Hasła nie są identyczne.');
+      setLoading(false);
+      return;
+    }
+    const displayName = name.trim() || email.trim().split('@')[0];
+    const phoneDigits = regPhone.replace(/\s/g, '') || undefined;
+    const { data, error } = await supabase.auth.signUp({
+      email: email.trim(),
+      password,
+      options: {
+        emailRedirectTo: typeof window !== 'undefined' ? `${window.location.origin}${window.location.pathname || '/'}` : undefined,
+        data: { display_name: displayName, phone: phoneDigits },
+      },
+    });
+    if (error) {
+      const em = (error.message || '').toLowerCase();
+      if (em.includes('already registered') || em.includes('user already')) {
+        setError('Ten adres jest już zarejestrowany — użyj logowania.');
+      } else {
+        setError(error.message || 'Nie udało się utworzyć konta.');
+      }
+      setLoading(false);
+      return;
+    }
+    if (data.session && data.user) {
+      await supabase.from('profiles').upsert(
+        { id: data.user.id, display_name: displayName, email: email.trim().toLowerCase(), phone: phoneDigits || null },
+        { onConflict: 'id' }
+      );
+      setLoading(false);
+      return;
+    }
+    if (data.user) {
+      setSuccess('Na podany adres wysłaliśmy wiadomość z linkiem aktywacyjnym. Otwórz mail, kliknij link — po aktywacji możesz się zalogować. (Sprawdź też folder Spam.)');
+    } else {
+      setSuccess('Sprawdź skrzynkę pocztową i postępuj według instrukcji z wiadomości.');
+    }
+    setMode('login');
+    setLoading(false);
+  };
+
+  return (
+    <div className="min-h-screen bg-green-950 flex items-center justify-center p-4">
+      <div className="w-full max-w-sm">
+        <div className="text-center mb-8">
+          <h1 className="text-3xl font-bold text-white tracking-tight">♠ Poker Settler</h1>
+          <p className="text-green-200/50 text-sm mt-2">Rozlicz grę ze znajomymi</p>
+        </div>
+        <div className="bg-black/30 border border-green-900 rounded-2xl p-6 space-y-4">
+          <div className="flex bg-black/30 border border-green-900 rounded-xl p-1 gap-1">
+            {['login','register'].map(m => (
+              <button key={m} onClick={() => { setMode(m); setError(''); setSuccess(''); setPasswordConfirm(''); setRegPhone(''); }}
+                className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${mode === m ? 'bg-rose-800 text-white' : 'text-green-200/60 hover:text-green-200'}`}>
+                {m === 'login' ? 'Logowanie' : 'Rejestracja'}
+              </button>
+            ))}
+          </div>
+          <form onSubmit={mode === 'login' ? handleLogin : handleRegister} className="space-y-3">
+            {mode === 'register' && (
+              <input value={name} onChange={e => setName(e.target.value)} placeholder="Imię (opcjonalne)"
+                className="w-full bg-black/40 rounded-xl px-4 py-3 text-sm text-white placeholder-green-700 border border-green-800 focus:outline-none focus:border-rose-600 transition-colors" />
+            )}
+            <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="Email *" required
+              className="w-full bg-black/40 rounded-xl px-4 py-3 text-sm text-white placeholder-green-700 border border-green-800 focus:outline-none focus:border-rose-600 transition-colors" />
+            <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Hasło (min. 6 znaków) *" required minLength={6}
+              className="w-full bg-black/40 rounded-xl px-4 py-3 text-sm text-white placeholder-green-700 border border-green-800 focus:outline-none focus:border-rose-600 transition-colors" />
+            {mode === 'register' && (
+              <input type="password" value={passwordConfirm} onChange={e => setPasswordConfirm(e.target.value)} placeholder="Potwierdź hasło *" required minLength={6}
+                className="w-full bg-black/40 rounded-xl px-4 py-3 text-sm text-white placeholder-green-700 border border-green-800 focus:outline-none focus:border-rose-600 transition-colors" />
+            )}
+            {mode === 'register' && (
+              <input type="tel" inputMode="numeric" value={regPhone} onChange={e => setRegPhone(formatPhone(e.target.value))} placeholder="Telefon (opcjonalnie)" maxLength={11}
+                className="w-full bg-black/40 rounded-xl px-4 py-3 text-sm text-white placeholder-green-700 border border-green-800 focus:outline-none focus:border-rose-600 transition-colors" />
+            )}
+            {error && <p className="text-xs text-rose-400 px-1">{error}</p>}
+            {success && <p className="text-xs text-emerald-400 px-1">{success}</p>}
+            <button type="submit" disabled={loading}
+              className="w-full bg-rose-800 hover:bg-rose-900 disabled:opacity-50 rounded-xl py-3 text-sm font-semibold transition-colors">
+              {loading ? 'Ładowanie...' : mode === 'login' ? 'Zaloguj się' : 'Utwórz konto'}
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── PlayersTab ───────────────────────────────────────────────────────────────
+
+function PlayersTab({ players, sessionPlayers, onAddPlayer, onUpdatePlayer, onRemovePlayer, onAddToSession, onUnlinkPlayer, currentUserId, accountByEmail, outgoingInviteMetaByEmail }) {
+  const [name, setName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [email, setEmail] = useState('');
+  const [editingId, setEditingId] = useState(null);
+  const [draft, setDraft] = useState({ name: '', phone: '', email: '' });
+
+  const phoneValid = phone.length === 11;
+  const phoneError = phone.length > 0 && phone.length < 11;
+  const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim().toLowerCase());
+  const emailError = email.trim().length > 0 && !emailValid;
+  const canSubmit = name.trim().length > 0 && phoneValid && emailValid;
+
+  const draftPhoneValid = draft.phone.length === 11;
+  const draftPhoneError = draft.phone.length > 0 && draft.phone.length < 11;
+  const draftEmailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test((draft.email || '').trim().toLowerCase());
+  const draftEmailError = (draft.email || '').trim().length > 0 && !draftEmailValid;
+  const canSaveDraft = draft.name.trim().length > 0 && draftPhoneValid && draftEmailValid;
+
+  const handlePhoneChange = e => setPhone(formatPhone(e.target.value));
+
+  const handleSubmit = e => {
+    e.preventDefault();
+    if (!canSubmit) return;
+    onAddPlayer(name.trim(), phone, email.trim().toLowerCase());
+    setName(''); setPhone(''); setEmail('');
+  };
+
+  const enterEdit = p => { setEditingId(p.id); setDraft({ name: p.name, phone: p.phone, email: p.email || '' }); };
+  const cancelEdit = () => { setEditingId(null); setDraft({ name: '', phone: '', email: '' }); };
+  const confirmEdit = id => {
+    if (!canSaveDraft) return;
+    onUpdatePlayer(id, draft.name.trim(), draft.phone, draft.email.trim().toLowerCase());
+    cancelEdit();
+  };
+
+  return (
+    <div className="p-4 space-y-5">
+      <div>
+        <h2 className="text-lg font-bold text-white tracking-tight">Gracze</h2>
+        <p className="text-xs text-green-200/55 mt-0.5">{players.length} zapisanych · baza na kolejne sesje</p>
+      </div>
+
+      <form onSubmit={handleSubmit} className="bg-black/30 rounded-2xl p-4 border border-green-900 space-y-3">
+        <input value={name} onChange={e => setName(e.target.value)} placeholder="Imię gracza *"
+          className="w-full bg-black/40 rounded-xl px-4 py-3 text-sm text-white placeholder-green-700 border border-green-800 focus:outline-none focus:border-rose-600 transition-colors" />
+        <div className="space-y-1">
+          <input value={phone} onChange={handlePhoneChange} placeholder="Numer telefonu *" type="tel" inputMode="numeric" maxLength={11}
+            className={`w-full bg-black/40 rounded-xl px-4 py-3 text-sm text-white placeholder-green-700 border transition-colors focus:outline-none ${phoneError ? 'border-red-500' : 'border-green-800 focus:border-rose-600'}`} />
+          {phoneError && <p className="text-xs text-red-400 px-1">Podaj pełny, 9-cyfrowy numer telefonu</p>}
+        </div>
+        <div className="space-y-1">
+          <input value={email} onChange={e => setEmail(e.target.value)} placeholder="Email znajomego *" type="email" autoComplete="off"
+            className={`w-full bg-black/40 rounded-xl px-4 py-3 text-sm text-white placeholder-green-700 border transition-colors focus:outline-none ${emailError ? 'border-red-500' : 'border-green-800 focus:border-rose-600'}`} />
+          {emailError && <p className="text-xs text-red-400 px-1">Podaj poprawny adres email</p>}
+          {!emailError && email.trim().length > 0 && <p className="text-xs text-green-300/50 px-1">Jeśli email nie ma konta, gracz zostanie dodany ze statusem „Brak konta” (bez zaproszenia).</p>}
+        </div>
+        <button type="submit" disabled={!canSubmit}
+          className="w-full flex items-center justify-center gap-2 bg-rose-800 hover:bg-rose-900 disabled:opacity-40 disabled:cursor-not-allowed rounded-xl py-3 text-sm font-semibold transition-colors">
+          <IconUserPlus /> Dodaj gracza i wyślij zaproszenie
+        </button>
+      </form>
+
+      <div className="space-y-2">
+        {players.length === 0 ? (
+          <div className="text-center py-12 bg-black/20 rounded-2xl border border-dashed border-green-900">
+            <p className="text-green-200/50 text-sm">Brak graczy.</p>
+            <p className="text-green-200/45 text-xs mt-1">Dodaj stałych bywalców powyżej.</p>
+          </div>
+        ) : players.map(p => {
+          const inSession = sessionPlayers.some(sp => sp.playerId === p.id);
+          const isEditing = editingId === p.id;
+          const isSelfPlayer = p.linked_user_id === currentUserId;
+          const emailNorm = (p.email || '').trim().toLowerCase();
+          const hasAccount = emailNorm ? accountByEmail[emailNorm] : undefined;
+          const inviteMeta = emailNorm ? outgoingInviteMetaByEmail[emailNorm] : null;
+          const inviteStatus = inviteMeta?.status || null;
+          const statusKey = p.linked_user_id
+            ? 'accepted'
+            : inviteStatus === 'pending'
+              ? 'invited'
+              : inviteStatus === 'rejected'
+                ? 'rejected'
+                : inviteStatus === 'cancelled'
+                  ? 'revoked'
+                  : inviteStatus === 'accepted'
+                    ? 'accepted'
+              : hasAccount === false
+                ? 'Brak konta'
+                : hasAccount === true
+                  ? 'Konto aktywne'
+                  : 'Niezweryfikowany';
+          const statusDotClass = statusKey === 'accepted' ? 'bg-emerald-400' : '';
+
+          return (
+            <div key={p.id} className="bg-black/30 rounded-2xl border border-green-900 px-4 py-3">
+              {isEditing ? (
+                <div className="space-y-2">
+                  <input value={draft.name} onChange={e => setDraft(d => ({ ...d, name: e.target.value }))}
+                    placeholder="Imię gracza" autoFocus
+                    className="w-full bg-black/40 rounded-xl px-3 py-2.5 text-sm text-white placeholder-green-700 border border-green-800 focus:outline-none focus:border-rose-600 transition-colors" />
+                  <div className="space-y-1">
+                    <input value={draft.phone} onChange={e => setDraft(d => ({ ...d, phone: formatPhone(e.target.value) }))}
+                      placeholder="Numer telefonu" type="tel" inputMode="numeric" maxLength={11}
+                      className={`w-full bg-black/40 rounded-xl px-3 py-2.5 text-sm text-white placeholder-green-700 border transition-colors focus:outline-none ${draftPhoneError ? 'border-red-500' : 'border-green-800 focus:border-rose-600'}`} />
+                    {draftPhoneError && <p className="text-xs text-red-400 px-1">Podaj pełny, 9-cyfrowy numer</p>}
+                  </div>
+                  <div className="space-y-1">
+                    <input value={draft.email} onChange={e => setDraft(d => ({ ...d, email: e.target.value }))}
+                      placeholder="Email znajomego" type="email" autoComplete="off"
+                      className={`w-full bg-black/40 rounded-xl px-3 py-2.5 text-sm text-white placeholder-green-700 border transition-colors focus:outline-none ${draftEmailError ? 'border-red-500' : 'border-green-800 focus:border-rose-600'}`} />
+                    {draftEmailError && <p className="text-xs text-red-400 px-1">Podaj poprawny email</p>}
+                  </div>
+                  <div className="flex gap-2 pt-0.5">
+                    <button onClick={() => confirmEdit(p.id)} disabled={!canSaveDraft}
+                      className="flex-1 flex items-center justify-center gap-1.5 bg-rose-800 hover:bg-rose-900 disabled:opacity-40 disabled:cursor-not-allowed rounded-xl py-2 text-sm font-semibold transition-colors">
+                      <IconCheck size={14} /> Zapisz
+                    </button>
+                    <button onClick={cancelEdit}
+                      className="flex items-center justify-center gap-1 bg-black/40 hover:bg-black/60 border border-green-900 rounded-xl px-4 py-2 text-sm text-green-200/60 hover:text-white transition-colors">
+                      <IconX size={14} /> Anuluj
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <p className="font-semibold text-white text-base leading-tight">{p.name}</p>
+                        {statusDotClass && (
+                          <span
+                            className={`inline-block w-2 h-2 rounded-full ${statusDotClass}`}
+                            title={statusKey}
+                            aria-label={statusKey}
+                          />
+                        )}
+                      </div>
+                      <p className="text-xs text-green-300/60">{p.phone || 'Brak numeru'}</p>
+                      {p.email && <p className="text-[11px] text-green-300/45 truncate">{p.email}</p>}
+                    </div>
+                    <button onClick={() => onAddToSession(p.id)} disabled={inSession}
+                      className={`shrink-0 flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border transition-colors ${inSession ? 'bg-emerald-900/30 text-emerald-400 border-emerald-800 cursor-default' : 'bg-black/30 text-green-200 border-green-800 hover:bg-green-900/50'}`}>
+                      {inSession ? <IconCheck /> : <IconPlus />}
+                      {inSession ? 'W sesji' : 'Sesja'}
+                    </button>
+                    {p.linked_user_id && p.linked_user_id !== currentUserId && (
+                      <button
+                        onClick={async () => { await onUnlinkPlayer(p.id); }}
+                        className="shrink-0 text-xs text-rose-300 border border-rose-900/60 hover:bg-rose-900/25 rounded-lg px-2.5 py-1.5 transition-colors"
+                        title="Odepnij konto"
+                      >
+                        Odepnij
+                      </button>
+                    )}
+                    <button onClick={() => enterEdit(p)} className="shrink-0 text-green-700 hover:text-green-300 transition-colors p-1">
+                      <IconPencil />
+                    </button>
+                    <button
+                      onClick={() => onRemovePlayer(p.id)}
+                      disabled={isSelfPlayer}
+                      title={isSelfPlayer ? 'Nie możesz usunąć własnego profilu gracza' : 'Usuń gracza'}
+                      className={`shrink-0 transition-colors p-1 ${isSelfPlayer ? 'text-green-900/40 cursor-not-allowed' : 'text-green-900 hover:text-rose-400'}`}
+                    >
+                      <IconTrash />
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ─── SessionTab ───────────────────────────────────────────────────────────────
+
+function SessionTab({ players, sessionPlayers, defaultBuyIn, totalPot, autoAddMeToSession, onToggleAutoAddMe, onDefaultBuyInChange, onAddBuyIn, onRemoveBuyIn, onRemoveFromSession, onAddToSession, onGoToSettlement }) {
+  const [showAdd, setShowAdd] = useState(false);
+  const [buyInInput, setBuyInInput] = useState(String(defaultBuyIn));
+
+  const available = players.filter(p => !sessionPlayers.some(sp => sp.playerId === p.id));
+
+  const handleBuyInChange = e => {
+    const raw = e.target.value.replace(/[^0-9]/g, '');
+    setBuyInInput(raw);
+    const val = parseInt(raw, 10);
+    if (!isNaN(val) && val > 0) onDefaultBuyInChange(val);
+  };
+  const handleBuyInBlur = () => {
+    const val = parseInt(buyInInput, 10);
+    if (isNaN(val) || val <= 0) setBuyInInput(String(defaultBuyIn));
+  };
+
+  return (
+    <div className="p-4 space-y-4">
+      <div className="px-1">
+        <h2 className="text-lg font-bold text-white tracking-tight">Sesja</h2>
+        <p className="text-xs text-green-200/55 mt-0.5">Buy-iny i skład przy stole</p>
+      </div>
+      <div className="bg-gradient-to-br from-green-900/60 to-black/60 border border-green-800/60 rounded-2xl p-4 flex items-center justify-between">
+        <div>
+          <p className="text-xs text-green-200/60 uppercase tracking-wider font-medium">Total Pot</p>
+          <p className="text-3xl font-bold text-white mt-1 tabular-nums">{formatPln(totalPot)} <span className="text-base text-green-200/55 font-normal">PLN</span></p>
+        </div>
+        <div className="text-right">
+          <p className="text-2xl font-bold text-yellow-400">{sessionPlayers.length}</p>
+          <p className="text-xs text-green-200/50">graczy</p>
+        </div>
+      </div>
+
+      <div className="bg-black/30 border border-green-900 rounded-2xl p-4">
+        <label className="text-xs text-green-200/60 uppercase tracking-wider block mb-2">Domyślny Buy-in</label>
+        <div className="flex items-center gap-3">
+          <input type="number" min="1" value={buyInInput} onChange={handleBuyInChange} onBlur={handleBuyInBlur}
+            className="w-28 bg-black/40 border border-green-800 rounded-xl px-4 py-2.5 text-white text-sm focus:outline-none focus:border-rose-600 transition-colors" />
+          <span className="text-green-200/50 text-sm">PLN / wejście</span>
+        </div>
+        <label className="mt-3 flex items-center justify-between gap-3 text-xs text-green-200/65">
+          <span>Automatycznie dodawaj mnie do nowej sesji</span>
+          <input
+            type="checkbox"
+            checked={!!autoAddMeToSession}
+            onChange={e => onToggleAutoAddMe?.(e.target.checked)}
+            className="accent-rose-700 w-4 h-4"
+          />
+        </label>
+      </div>
+
+      <div className="space-y-2">
+        <p className="text-xs text-green-200/60 uppercase tracking-wider px-1">W Sesji</p>
+        {sessionPlayers.length === 0 ? (
+          <div className="text-center py-10 bg-black/20 rounded-2xl border border-dashed border-green-900">
+            <p className="text-green-200/50 text-sm">Brak graczy w sesji.</p>
+            <p className="text-green-200/45 text-xs mt-1">Dodaj graczy z listy poniżej.</p>
+          </div>
+        ) : sessionPlayers.map(sp => {
+          const player = players.find(p => p.id === sp.playerId);
+          if (!player) return null;
+          const total = getTotalBuyIn(sp);
+          return (
+            <div key={sp.playerId} className="bg-black/30 border border-green-900 rounded-2xl p-4 space-y-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-green-900/70 text-green-200 flex items-center justify-center text-sm font-bold shrink-0">
+                  {player.name[0]?.toUpperCase()}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-semibold text-white truncate">{player.name}</p>
+                </div>
+                <div className="text-right mr-1 shrink-0">
+                  <p className="text-yellow-400 font-bold text-lg tabular-nums">{formatPln(total)}</p>
+                  <p className="text-xs text-green-200/50">PLN</p>
+                </div>
+                <button onClick={() => onRemoveFromSession(sp.playerId)} className="text-green-900 hover:text-rose-400 transition-colors p-1 shrink-0">
+                  <IconX />
+                </button>
+              </div>
+              <div className="flex items-stretch rounded-xl overflow-hidden border border-green-900 gap-px bg-green-900">
+                <button onClick={() => onRemoveBuyIn(sp.playerId)} disabled={sp.buyIns.length <= 1}
+                  className="w-16 flex items-center justify-center bg-black/50 text-white hover:bg-black/70 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
+                  <IconMinus />
+                </button>
+                <div className="flex-1 flex flex-col items-center justify-center py-3 bg-black/30">
+                  <p className="font-bold text-white leading-tight">
+                    {sp.buyIns.length}<span className="text-green-200/50 font-normal">×</span> <span className="text-yellow-400 tabular-nums">{formatPln(defaultBuyIn)}</span> <span className="text-green-200/50 text-sm font-normal">PLN</span>
+                  </p>
+                  <p className="text-xs text-green-200/55 mt-0.5">= {formatPln(total)} PLN łącznie</p>
+                </div>
+                <button onClick={() => onAddBuyIn(sp.playerId)}
+                  className="w-16 flex items-center justify-center bg-rose-800 hover:bg-rose-900 text-white transition-colors">
+                  <IconPlus size={18} />
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {available.length > 0 && (
+        <div className="bg-black/30 border border-green-900 rounded-2xl overflow-hidden">
+          <button onClick={() => setShowAdd(v => !v)}
+            className="w-full flex items-center justify-between px-4 py-3.5 text-sm text-green-200 hover:bg-black/40 transition-colors">
+            <span className="font-medium">Dodaj gracza do sesji ({available.length})</span>
+            {showAdd ? <IconChevUp /> : <IconChevDown />}
+          </button>
+          {showAdd && (
+            <div className="border-t border-green-900">
+              {available.map(p => (
+                <button key={p.id} onClick={() => { onAddToSession(p.id); if (available.length <= 1) setShowAdd(false); }}
+                  className="w-full flex items-center gap-3 px-4 py-3 hover:bg-black/40 transition-colors border-b border-green-900 last:border-b-0 text-left">
+                  <div className="w-8 h-8 rounded-full bg-green-900/60 text-green-200 flex items-center justify-center text-sm font-bold shrink-0">
+                    {p.name[0]?.toUpperCase()}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm text-white font-medium truncate">{p.name}</p>
+                    <p className="text-xs text-green-200/50">{p.phone || 'Brak numeru'}</p>
+                  </div>
+                  <IconPlusCircle />
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {sessionPlayers.length >= 2 && (
+        <button onClick={onGoToSettlement}
+          className="w-full flex items-center justify-center gap-2 bg-rose-800 hover:bg-rose-900 rounded-xl py-4 text-sm font-semibold transition-colors">
+          Przejdź do rozliczenia →
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ─── SettlementTab ────────────────────────────────────────────────────────────
+
+function SettlementTab({ players, sessionPlayers, transactions, settled, totalPot, onSetCashOut, onCalculate, onResetSession, onSaveAndFinish, savingSession, saveStatus }) {
+  const [copied, setCopied] = useState(false);
+
+  const totalCashOut = sessionPlayers.reduce((sum, sp) => {
+    const val = parseFloat(sp.cashOut);
+    return sum + (isNaN(val) ? 0 : val);
+  }, 0);
+
+  const diff = totalPot - totalCashOut;
+  const isBalanced = Math.abs(diff) < 0.01 && sessionPlayers.length > 0;
+  const allFilled = sessionPlayers.every(sp => sp.cashOut !== '');
+  const progress = totalPot > 0 ? Math.min((totalCashOut / totalPot) * 100, 100) : 0;
+
+  const buildReport = () => {
+    const date = new Date().toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    const results = sessionPlayers.map(sp => {
+      const player = players.find(p => p.id === sp.playerId);
+      const buyInTotal = getTotalBuyIn(sp);
+      const cashOut = parseFloat(sp.cashOut) || 0;
+      const net = cashOut - buyInTotal;
+      return `  ${player?.name ?? '?'}: ${net >= 0 ? '+' : ''}${formatPln(net)} PLN`;
+    });
+    const transferLines = transactions.length === 0
+      ? ['  Nikt nikomu nie jest winien!']
+      : transactions.map(t => `  ${t.from} → ${t.to}: ${formatPln(t.amount)} PLN${t.toPhone ? ` (Tel: ${t.toPhone})` : ''}`);
+    return [`♠ Rozliczenie Poker — ${date}`, `Pula: ${formatPln(totalPot)} PLN`, '', 'Wyniki:', ...results, '', 'Przelewy:', ...transferLines].join('\n');
+  };
+
+  const copyReport = async () => {
+    const report = buildReport();
+    try {
+      await navigator.clipboard.writeText(report);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    } catch {}
+  };
+
+  if (sessionPlayers.length === 0) return (
+    <div className="flex flex-col items-center justify-center min-h-[60vh] text-center p-8">
+      <p className="text-green-200/50 text-sm">Brak aktywnej sesji.</p>
+      <p className="text-green-200/45 text-xs mt-1">Dodaj graczy w zakładce Sesja.</p>
+    </div>
+  );
+
+  return (
+    <div className="p-4 space-y-5">
+      <div className="px-1">
+        <h2 className="text-lg font-bold text-white tracking-tight">Wyniki</h2>
+        <p className="text-xs text-green-200/55 mt-0.5">Cash-outy i minimalna lista przelewów</p>
+      </div>
+      <div className={`rounded-2xl border p-4 transition-colors ${isBalanced ? 'bg-emerald-900/20 border-emerald-800' : allFilled ? 'bg-red-900/20 border-red-800/60' : 'bg-black/30 border-green-900'}`}>
+        <div className="flex justify-between items-center mb-3">
+          <span className="text-xs text-green-200/60 uppercase tracking-wider font-medium">Bilans</span>
+          {isBalanced ? (
+            <span className="flex items-center gap-1 text-xs text-emerald-400 font-semibold"><IconCheck size={12} /> Zbilansowane</span>
+          ) : allFilled ? (
+            <span className="text-xs text-rose-400 font-semibold tabular-nums">{diff > 0 ? `Brakuje ${formatPln(diff)} PLN` : `Nadwyżka ${formatPln(Math.abs(diff))} PLN`}</span>
+          ) : (
+            <span className="text-xs text-green-200/55">Uzupełnij cash-outy</span>
+          )}
+        </div>
+        <div className="flex items-end gap-3 text-sm mb-3">
+          <div className="flex-1">
+            <p className="text-xs text-green-200/55 mb-0.5">Buy-iny (pula)</p>
+            <p className="text-xl font-bold text-white tabular-nums">{formatPln(totalPot)} PLN</p>
+          </div>
+          <div className="text-green-700 pb-1 text-xs">vs</div>
+          <div className="flex-1 text-right">
+            <p className="text-xs text-green-200/55 mb-0.5">Cash-outy</p>
+            <p className={`text-xl font-bold tabular-nums ${isBalanced ? 'text-emerald-400' : allFilled ? 'text-rose-400' : 'text-white'}`}>{formatPln(totalCashOut)} PLN</p>
+          </div>
+        </div>
+        <div className="w-full bg-black/40 rounded-full h-1.5 overflow-hidden">
+          <div className={`h-full rounded-full transition-all duration-300 ${isBalanced ? 'bg-emerald-500' : 'bg-red-500'}`} style={{ width: `${progress}%` }} />
+        </div>
+        <p className="text-[11px] text-green-200/55 mt-2 leading-snug">
+          Suma wpisanych cash-outów powinna być równa sumie buy-inów (puli). Różnica = błąd lub brakująca gotówka przy stole.
+        </p>
+      </div>
+
+      <div className="space-y-2">
+        <p className="text-xs text-green-200/60 uppercase tracking-wider px-1">Cash Out</p>
+        {sessionPlayers.map(sp => {
+          const player = players.find(p => p.id === sp.playerId);
+          if (!player) return null;
+          const buyInTotal = getTotalBuyIn(sp);
+          const cashOutVal = parseFloat(sp.cashOut);
+          const net = isNaN(cashOutVal) ? null : cashOutVal - buyInTotal;
+          return (
+            <div key={sp.playerId} className="bg-black/30 border border-green-900 rounded-2xl p-4">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-9 h-9 rounded-full bg-green-900/70 text-green-200 flex items-center justify-center text-sm font-bold shrink-0">
+                  {player.name[0]?.toUpperCase()}
+                </div>
+                <div className="flex-1">
+                  <p className="text-sm font-semibold text-white">{player.name}</p>
+                  <p className="text-xs text-green-300/65">Buy-in: {formatPln(buyInTotal)} PLN</p>
+                </div>
+                {net !== null && (
+                  <div className={`text-sm font-bold tabular-nums ${net >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                    {net >= 0 ? '+' : ''}{formatPln(net)} PLN
+                  </div>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <input type="number" min="0" placeholder="0" value={sp.cashOut}
+                  onChange={e => onSetCashOut(sp.playerId, e.target.value)}
+                  className="flex-1 bg-black/40 border border-green-800 rounded-xl px-4 py-3 text-white text-base font-medium focus:outline-none focus:border-rose-600 transition-colors" />
+                <span className="text-green-200/50 text-sm font-medium">PLN</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <button onClick={onCalculate} disabled={!allFilled}
+        className="w-full flex items-center justify-center gap-2 bg-rose-800 hover:bg-rose-900 disabled:opacity-40 disabled:cursor-not-allowed rounded-xl py-4 text-base font-bold transition-colors">
+        <IconCalc /> {isBalanced ? 'Oblicz rozliczenia' : 'Oblicz mimo różnicy'}
+      </button>
+
+      {settled && (
+        <div className="space-y-3">
+          <p className="text-xs text-green-200/60 uppercase tracking-wider px-1">Przelewy ({transactions.length})</p>
+          {transactions.length === 0 ? (
+            <div className="bg-emerald-900/20 border border-emerald-800 rounded-2xl p-5 text-center">
+              <p className="text-emerald-400 font-semibold text-base">🎉 Nikt nikomu nie jest winien!</p>
+              <p className="text-green-200/50 text-xs mt-1">Wszyscy wyszli na zero.</p>
+            </div>
+          ) : transactions.map((t, idx) => (
+            <div key={idx} className="bg-black/30 border border-green-900 rounded-2xl p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <span className="font-semibold text-white text-sm">{t.from}</span>
+                <IconArrow />
+                <span className="font-semibold text-white text-sm">{t.to}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-2xl font-bold text-yellow-400 tabular-nums">{formatPln(t.amount)} PLN</span>
+                {t.toPhone && (
+                  <a href={`tel:${t.toPhone.replace(/\s/g, '')}`}
+                    className="flex items-center gap-1.5 text-xs text-green-200 bg-black/40 border border-green-800 hover:bg-black/60 px-3 py-1.5 rounded-lg transition-colors">
+                    <IconPhone /> {t.toPhone}
+                  </a>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {settled && (
+        <div className="space-y-2 pb-4">
+          <button onClick={onSaveAndFinish} disabled={savingSession}
+            className="w-full flex items-center justify-center gap-2 bg-rose-800 hover:bg-rose-900 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl py-4 text-base font-bold transition-colors">
+            <IconSave /> {savingSession ? 'Zapisywanie...' : 'Zakończ i Zapisz Sesję'}
+          </button>
+          {saveStatus && (
+            <p className={`text-xs px-1 ${saveStatus.type === 'error' ? 'text-rose-400' : 'text-emerald-400'}`}>{saveStatus.message}</p>
+          )}
+          <button onClick={copyReport}
+            className="w-full flex items-center justify-center gap-2 bg-black/30 hover:bg-black/50 border border-green-900 rounded-xl py-3.5 text-sm font-semibold transition-colors">
+            {copied ? <IconCheck /> : <IconShare />} {copied ? 'Skopiowano!' : 'Kopiuj rozliczenie'}
+          </button>
+          <button onClick={onResetSession}
+            className="w-full flex items-center justify-center gap-2 bg-rose-950/50 hover:bg-rose-900/50 border border-rose-900/50 rounded-xl py-3.5 text-sm font-semibold text-rose-400 transition-colors">
+            <IconRefresh /> Nowa sesja (bez zapisywania)
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── HistoryTab ───────────────────────────────────────────────────────────────
+
+function calculateAllTimeStats(history) {
+  const map = history.reduce((acc, session) => {
+    for (const p of session.players) {
+      if (!acc[p.id]) acc[p.id] = { id: p.id, name: p.name, gamesPlayed: 0, allTimeBuyIn: 0, allTimeCashOut: 0, totalNetBalance: 0 };
+      acc[p.id].gamesPlayed += 1;
+      acc[p.id].allTimeBuyIn += p.totalBuyIn;
+      acc[p.id].allTimeCashOut += p.cashOut;
+      acc[p.id].totalNetBalance += p.netBalance;
+    }
+    return acc;
+  }, {});
+  return Object.values(map).sort((a, b) => b.totalNetBalance - a.totalNetBalance);
+}
+
+function recalculateSession(session, updatedPlayers) {
+  const players = updatedPlayers.map(p => ({
+    ...p,
+    netBalance: (plnToCents(p.cashOut) - plnToCents(p.totalBuyIn)) / 100,
+  }));
+  const totalPot = players.reduce((sum, p) => sum + plnToCents(p.totalBuyIn), 0) / 100;
+  const entries = players.map(p => ({
+    name: p.name,
+    phone: p.phone ?? '',
+    cents: plnToCents(p.cashOut) - plnToCents(p.totalBuyIn),
+  }));
+  const transfers = settleDebts(entries);
+  return { ...session, totalPot, players, transfers };
+}
+
+function NetBadge({ value }) {
+  if (value > 0) return <span className="font-bold text-green-500">+{formatPln(value)} PLN</span>;
+  if (value < 0) return <span className="font-bold text-red-500">−{formatPln(-value)} PLN</span>;
+  return <span className="font-bold text-green-200/55 tabular-nums">{formatPln(0)} PLN</span>;
+}
+
+const MEDALS = ['🥇', '🥈', '🥉'];
+const PERIODS = [
+  { label: '5 gier', value: 5 },
+  { label: '10 gier', value: 10 },
+  { label: '15 gier', value: 15 },
+  { label: 'All time', value: null },
+];
+
+function HistoryTab({ history, onUpdateSession, onDeleteSession, failedSyncCount, failedSessionIds, onRetryFailedSaves, retryingFailedSaves }) {
+  const [period, setPeriod] = useState(null);
+  const [expandedId, setExpandedId] = useState(null);
+  const [editingIds, setEditingIds] = useState({});
+  const [sessionDrafts, setSessionDrafts] = useState({});
+  const [sessionEditErrors, setSessionEditErrors] = useState({});
+  const [savingEditId, setSavingEditId] = useState(null);
+  const [copiedIds, setCopiedIds] = useState({});
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+  const [archiveLimit, setArchiveLimit] = useState(25);
+
+  const ownedHistoryForStats = useMemo(() => history.filter(s => !s.shared), [history]);
+  const filteredHistory = period === null ? ownedHistoryForStats : ownedHistoryForStats.slice(-period);
+  const stats = calculateAllTimeStats(filteredHistory);
+  const sorted = [...history].reverse();
+  const drilldownSessions = sorted;
+  const archiveSlice = drilldownSessions.slice(0, archiveLimit);
+  const failedSessionIdSet = useMemo(() => new Set(failedSessionIds), [failedSessionIds]);
+
+  const enterEdit = session => {
+    setSessionDrafts(prev => ({ ...prev, [session.id]: session.players.map(p => ({ ...p })) }));
+    setEditingIds(prev => ({ ...prev, [session.id]: true }));
+    setSessionEditErrors(prev => ({ ...prev, [session.id]: null }));
+  };
+  const cancelEdit = id => {
+    setSessionDrafts(prev => { const n = { ...prev }; delete n[id]; return n; });
+    setEditingIds(prev => { const n = { ...prev }; delete n[id]; return n; });
+    setSessionEditErrors(prev => { const n = { ...prev }; delete n[id]; return n; });
+  };
+  const updateDraft = (sessionId, playerId, field, raw) => {
+    const value = Math.max(0, parseFloat(raw.replace(/[^0-9.]/g, '')) || 0);
+    setSessionDrafts(prev => ({ ...prev, [sessionId]: (prev[sessionId] ?? []).map(p => p.id === playerId ? { ...p, [field]: value } : p) }));
+  };
+  const confirmEdit = async session => {
+    const draft = sessionDrafts[session.id];
+    if (!draft) return;
+    setSessionEditErrors(prev => ({ ...prev, [session.id]: null }));
+    setSavingEditId(session.id);
+    const err = await onUpdateSession(session.id, recalculateSession(session, draft));
+    setSavingEditId(null);
+    if (err) {
+      setSessionEditErrors(prev => ({ ...prev, [session.id]: err }));
+      return;
+    }
+    cancelEdit(session.id);
+  };
+  const shareSession = async session => {
+    const date = new Date(session.date).toLocaleDateString('pl-PL', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+    const playerLines = [...session.players].sort((a, b) => b.netBalance - a.netBalance).map(p => {
+      const emoji = p.netBalance > 0 ? '🟢' : p.netBalance < 0 ? '🔴' : '⚪️';
+      const sign = p.netBalance > 0 ? '+' : '';
+      return `${emoji} ${p.name}: *${sign}${formatPln(p.netBalance)} PLN*`;
+    });
+    const transferLines = session.transfers.length > 0
+      ? session.transfers.map(t => `• ${t.from} ➜ ${t.to}: *${formatPln(t.amount)} PLN*${t.toPhone ? `  📱 ${t.toPhone}` : ''}`)
+      : ['✅ Brak przelewów — wszyscy wyszli na zero!'];
+    const text = [`♠️ *Poker Night — ${date}*`, `💰 *Pula: ${formatPln(session.totalPot)} PLN*`, '', '📊 *Wyniki:*', ...playerLines, '', '💸 *Przelewy:*', ...transferLines].join('\n');
+    if (navigator.share) { try { await navigator.share({ text }); return; } catch {} }
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedIds(prev => ({ ...prev, [session.id]: true }));
+      setTimeout(() => setCopiedIds(prev => { const n = { ...prev }; delete n[session.id]; return n; }), 2500);
+    } catch {}
+  };
+
+  return (
+    <div className="p-4 space-y-4">
+      {failedSyncCount > 0 && (
+        <div className="bg-yellow-900/20 border border-yellow-800/50 rounded-2xl p-3">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-xs text-yellow-200/80">
+              {failedSyncCount} {pluralPL(failedSyncCount, 'sesja czeka', 'sesje czekają', 'sesji czeka')} na zapis do chmury.
+            </p>
+            <button onClick={onRetryFailedSaves} disabled={retryingFailedSaves}
+              className="text-xs bg-yellow-700 hover:bg-yellow-800 disabled:opacity-50 rounded-lg px-3 py-1.5 font-semibold transition-colors">
+              {retryingFailedSaves ? 'Ponawianie...' : 'Ponów zapis'}
+            </button>
+          </div>
+        </div>
+      )}
+      <div>
+        <h2 className="text-lg font-bold text-white tracking-tight">Historia</h2>
+        <p className="text-xs text-green-200/55 mt-0.5">{history.length} {pluralPL(history.length, 'sesja', 'sesje', 'sesji')} w archiwum · podsumowanie All time</p>
+      </div>
+
+      <div className="flex gap-1.5 flex-wrap">
+        {PERIODS.map(({ label, value }) => {
+          const active = period === value;
+          const available = value === null || ownedHistoryForStats.length >= value;
+          return (
+            <button key={label} onClick={() => { setPeriod(value); setArchiveLimit(25); }} disabled={!available}
+              className={`px-3 py-1 rounded-full text-xs font-medium transition-colors border ${active ? 'bg-rose-800 border-rose-800 text-white' : available ? 'bg-black/30 border-green-800 text-green-200/70 hover:border-green-600 hover:text-green-200' : 'bg-black/10 border-green-900/40 text-green-200/20 cursor-not-allowed'}`}>
+              {label}
+            </button>
+          );
+        })}
+      </div>
+      <p className="text-xs text-green-200/60 uppercase tracking-wider px-1">
+        {period === null ? 'All time' : `Ostatnie ${Math.min(period, ownedHistoryForStats.length)} ${pluralPL(Math.min(period, ownedHistoryForStats.length), 'gra', 'gry', 'gier')}`}
+      </p>
+
+      <div className="space-y-2">
+        <p className="text-xs text-green-200/60 uppercase tracking-wider px-1">Bilans graczy</p>
+        {stats.length === 0 ? (
+          <div className="text-center py-12 bg-black/20 rounded-2xl border border-dashed border-green-900">
+            <p className="text-green-200/50 text-sm">Brak danych.</p>
+            <p className="text-green-200/30 text-xs mt-1">Zagraj i zapisz pierwszą sesję.</p>
+          </div>
+        ) : stats.map((s, idx) => {
+          return (
+            <div key={s.id}
+              className="w-full bg-black/30 border rounded-2xl px-4 py-3 flex items-center gap-3 text-left border-green-900">
+              <div className="w-8 text-center shrink-0">
+                {idx < 3 ? <span className="text-lg">{MEDALS[idx]}</span> : <span className="text-sm text-green-200/40 font-semibold">#{idx + 1}</span>}
+              </div>
+              <div className="w-9 h-9 rounded-full bg-green-900/70 text-green-200 flex items-center justify-center text-sm font-bold shrink-0">
+                {s.name[0]?.toUpperCase()}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="font-semibold text-white text-sm truncate">{s.name}</p>
+                <p className="text-xs text-green-200/40">{s.gamesPlayed} {pluralPL(s.gamesPlayed, 'gra', 'gry', 'gier')}</p>
+              </div>
+              <NetBadge value={s.totalNetBalance} />
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="space-y-2">
+          <p className="text-xs text-green-200/60 uppercase tracking-wider px-1">Zapisane sesje</p>
+          {drilldownSessions.length === 0 ? (
+            <div className="text-center py-12 bg-black/20 rounded-2xl border border-dashed border-green-900">
+              <p className="text-green-200/50 text-sm">Brak sesji.</p>
+              <p className="text-green-200/30 text-xs mt-1">Zakończ i zapisz pierwszą grę.</p>
+            </div>
+          ) : (
+            <>
+          {archiveSlice.map(session => {
+            const isExpanded = expandedId === session.id;
+            const isEditing = !!editingIds[session.id];
+            const draft = sessionDrafts[session.id];
+            const isCopied = !!copiedIds[session.id];
+            const isPendingSync = failedSessionIdSet.has(session.id);
+            const isShared = !!session.shared;
+            return (
+              <div key={session.id} className="bg-black/30 border border-green-900 rounded-2xl overflow-hidden">
+                <div className="flex items-center">
+                  <button onClick={() => setExpandedId(prev => prev === session.id ? null : session.id)}
+                    className="flex-1 flex items-center gap-3 px-4 py-3 hover:bg-black/40 transition-colors text-left min-w-0">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-white truncate">{formatDate(session.date)}</p>
+                      <p className="text-xs text-green-200/50 mt-0.5">
+                        Pula: <span className="text-yellow-400 font-semibold tabular-nums">{formatPln(session.totalPot)} PLN</span> · {session.players.length} graczy
+                      </p>
+                      {isPendingSync && <p className="text-[11px] text-yellow-300 mt-0.5">Oczekuje na zapis do chmury</p>}
+                      {isShared && (
+                        <p className="text-[11px] text-emerald-300/90 mt-0.5 inline-flex items-center gap-1">
+                          <span aria-label="info" title={session.sharedNote || 'Sesja współdzielona'}>i</span>
+                        </p>
+                      )}
+                    </div>
+                  </button>
+                  <button onClick={() => shareSession(session)} disabled={isShared}
+                    className={`p-3 transition-colors shrink-0 ${isCopied ? 'text-green-400' : 'text-green-700 hover:text-green-300'} ${isShared ? 'opacity-40 cursor-not-allowed' : ''}`}>
+                    {isCopied ? <IconCheck size={16} /> : <IconShare />}
+                  </button>
+                  <button onClick={() => setExpandedId(prev => prev === session.id ? null : session.id)}
+                    className="pr-3 text-green-700 hover:text-green-400 transition-colors shrink-0">
+                    {isExpanded ? <IconChevUp /> : <IconChevDown />}
+                  </button>
+                </div>
+
+                {isExpanded && (
+                  <div className="border-t border-green-900 px-4 py-3 space-y-4">
+                    {!isEditing && !isShared && (
+                      <div className="flex items-center justify-between">
+                        <button onClick={() => enterEdit(session)}
+                          className="flex items-center gap-1.5 text-xs text-green-400/70 hover:text-green-300 transition-colors">
+                          <IconPencil /> Edytuj wyniki
+                        </button>
+                        {confirmDeleteId === session.id ? (
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-rose-400">Na pewno usunąć?</span>
+                            <button onClick={() => { onDeleteSession(session.id); setConfirmDeleteId(null); setExpandedId(null); }}
+                              className="text-xs bg-rose-800 hover:bg-rose-700 text-white px-2.5 py-1 rounded-lg transition-colors font-semibold">
+                              Usuń
+                            </button>
+                            <button onClick={() => setConfirmDeleteId(null)}
+                              className="text-xs text-green-200/50 hover:text-white transition-colors px-1">
+                              Anuluj
+                            </button>
+                          </div>
+                        ) : (
+                          <button onClick={() => setConfirmDeleteId(session.id)}
+                            className="flex items-center gap-1 text-xs text-green-900 hover:text-rose-400 transition-colors">
+                            <IconTrash /> Usuń sesję
+                          </button>
+                        )}
+                      </div>
+                    )}
+                    {!isEditing && isShared && (
+                      <p className="text-xs text-emerald-300/80">Ta sesja jest współdzielona przez połączone konto i jest tylko do podglądu.</p>
+                    )}
+                    <div>
+                      <p className="text-xs text-green-200/50 uppercase tracking-wider mb-2">Wyniki graczy</p>
+                      {isEditing ? (
+                        <div className="space-y-2">
+                          {(draft ?? session.players).map(p => (
+                            <div key={p.id} className="bg-black/20 border border-green-900/60 rounded-xl p-3 space-y-2">
+                              <div className="flex items-center gap-2">
+                                <div className="w-6 h-6 rounded-full bg-green-900/60 text-green-200 flex items-center justify-center text-xs font-bold shrink-0">
+                                  {p.name[0]?.toUpperCase()}
+                                </div>
+                                <span className="text-sm font-semibold text-white flex-1">{p.name}</span>
+                                <span className="text-xs text-green-200/40">bilans: <NetBadge value={(plnToCents(p.cashOut) - plnToCents(p.totalBuyIn)) / 100} /></span>
+                              </div>
+                              <div className="grid grid-cols-2 gap-2">
+                                <div>
+                                  <label className="text-xs text-green-200/40 block mb-1">Buy-in (PLN)</label>
+                                  <input type="number" min="0" value={p.totalBuyIn}
+                                    onChange={e => updateDraft(session.id, p.id, 'totalBuyIn', e.target.value)}
+                                    className="w-full bg-black/40 border border-green-800 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-rose-600 transition-colors" />
+                                </div>
+                                <div>
+                                  <label className="text-xs text-green-200/40 block mb-1">Cash-out (PLN)</label>
+                                  <input type="number" min="0" value={p.cashOut}
+                                    onChange={e => updateDraft(session.id, p.id, 'cashOut', e.target.value)}
+                                    className="w-full bg-black/40 border border-green-800 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-rose-600 transition-colors" />
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                          {sessionEditErrors[session.id] && (
+                            <p className="text-xs text-rose-400 px-1">{sessionEditErrors[session.id]}</p>
+                          )}
+                          <div className="flex gap-2 pt-1">
+                            <button onClick={() => confirmEdit(session)} disabled={savingEditId === session.id}
+                              className="flex-1 flex items-center justify-center gap-1.5 bg-rose-800 hover:bg-rose-900 disabled:opacity-50 rounded-xl py-2.5 text-sm font-semibold transition-colors">
+                              <IconRefresh /> {savingEditId === session.id ? 'Zapisywanie...' : 'Przelicz i Zapisz'}
+                            </button>
+                            <button onClick={() => cancelEdit(session.id)}
+                              className="flex items-center justify-center gap-1 bg-black/40 hover:bg-black/60 border border-green-900 rounded-xl px-4 py-2.5 text-sm text-green-200/60 hover:text-white transition-colors">
+                              <IconX /> Anuluj
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="space-y-1.5">
+                          {session.players.map(p => (
+                            <div key={p.id} className="flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <div className="w-6 h-6 rounded-full bg-green-900/60 text-green-200 flex items-center justify-center text-xs font-bold shrink-0">
+                                  {p.name[0]?.toUpperCase()}
+                                </div>
+                                <span className="text-sm text-white">{p.name}</span>
+                              </div>
+                              <div className="text-right">
+                                <NetBadge value={p.netBalance} />
+                                <p className="text-xs text-green-200/55 tabular-nums">{formatPln(p.totalBuyIn)} → {formatPln(p.cashOut)} PLN</p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    {!isEditing && (
+                      session.transfers.length > 0 ? (
+                        <div>
+                          <p className="text-xs text-green-200/50 uppercase tracking-wider mb-2">Przelewy</p>
+                          <div className="space-y-1.5">
+                            {session.transfers.map((t, idx) => (
+                              <div key={idx} className="flex items-center justify-between">
+                                <div className="flex items-center gap-1.5 text-sm text-white min-w-0">
+                                  <span className="truncate max-w-[80px]">{t.from}</span>
+                                  <IconArrow />
+                                  <span className="truncate max-w-[80px]">{t.to}</span>
+                                </div>
+                                <div className="flex items-center gap-2 shrink-0">
+                                  <span className="text-yellow-400 font-semibold text-sm tabular-nums">{formatPln(t.amount)} PLN</span>
+                                  {t.toPhone && (
+                                    <a href={`tel:${t.toPhone.replace(/\s/g, '')}`} className="text-green-200/60 hover:text-green-200 transition-colors">
+                                      <IconPhone />
+                                    </a>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : <p className="text-xs text-emerald-400">{isShared ? 'Brak szczegółowych przelewów w widoku współdzielonym.' : '🎉 Wszyscy wyszli na zero — brak przelewów.'}</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          {drilldownSessions.length > archiveLimit && (
+            <button type="button" onClick={() => setArchiveLimit(l => l + 25)}
+              className="w-full py-3 text-sm font-medium text-green-200/70 border border-green-900 rounded-2xl hover:bg-black/30 transition-colors">
+              Pokaż więcej ({drilldownSessions.length - archiveLimit} pozostało)
+            </button>
+          )}
+            </>
+          )}
+        </div>
+    </div>
+  );
+}
+
+// ─── ProfileView ──────────────────────────────────────────────────────────────
+
+function ProfileView({ user, history, players, pendingInvites, outgoingInvites, onAcceptInvite, onRejectInvite, onCancelInvite, onUnlinkPlayer, onSignOut, onRefresh, onRenameSelf, refreshBusy, syncMeta, onRetrySyncFailed, retryingFailedSaves, failedCloudSavesCount }) {
+  const [profile, setProfile] = useState(null);
+  const [editingName, setEditingName] = useState(false);
+  const [draftName, setDraftName] = useState('');
+  const [savingName, setSavingName] = useState(false);
+  const [nameSaveError, setNameSaveError] = useState('');
+  const [myGames, setMyGames] = useState([]);
+  const [editingPhone, setEditingPhone] = useState(false);
+  const [draftPhone, setDraftPhone] = useState('');
+  const [savingPhone, setSavingPhone] = useState(false);
+  const [phoneSaveError, setPhoneSaveError] = useState('');
+  const [inviteBusyId, setInviteBusyId] = useState(null);
+  const [inviteMsg, setInviteMsg] = useState('');
+  const [showSyncDetails, setShowSyncDetails] = useState(false);
+
+  useEffect(() => {
+    supabase.from('profiles').select('*').eq('id', user.id).single().then(({ data }) => {
+      setProfile(data);
+      setDraftName(data?.display_name || user.email?.split('@')[0] || '');
+      setDraftPhone(data?.phone ? formatPhone(data.phone) : '');
+    });
+    supabase.from('participations').select('*').eq('user_id', user.id).order('session_date', { ascending: false }).then(({ data }) => {
+      if (data) setMyGames(data);
+    });
+    // Keep profile email aligned, but do not create partial rows.
+    supabase.from('profiles').update({ email: (user.email || '').trim().toLowerCase() }).eq('id', user.id);
+  }, [user.id]);
+
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState !== 'visible') return;
+      supabase.from('profiles').select('*').eq('id', user.id).maybeSingle().then(({ data }) => {
+        if (!data) return;
+        setProfile(data);
+        setDraftName(data.display_name || user.email?.split('@')[0] || '');
+        setDraftPhone(data.phone ? formatPhone(data.phone) : '');
+      });
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, [user.id, user.email]);
+
+  const buildProfilePayload = (patch = {}) => {
+    const safeName = (patch.display_name ?? draftName ?? profile?.display_name ?? user.email?.split('@')[0] ?? 'Gracz').trim() || 'Gracz';
+    const safeEmailRaw = (profile?.email ?? user.email ?? '').trim().toLowerCase();
+    const safePhoneRaw = patch.phone !== undefined
+      ? patch.phone
+      : (draftPhone ? draftPhone.replace(/\s/g, '') : (profile?.phone ?? null));
+    const safePhone = safePhoneRaw ? String(safePhoneRaw).replace(/\s/g, '') : null;
+    return {
+      id: user.id,
+      display_name: safeName,
+      email: safeEmailRaw || null,
+      phone: safePhone,
+    };
+  };
+
+  const persistProfilePatch = async (patch = {}) => {
+    const payload = buildProfilePayload(patch);
+    const { error: updateErr } = await supabase.from('profiles').update(payload).eq('id', user.id);
+    if (!updateErr) return { error: null, payload };
+    const { error: upsertErr } = await supabase.from('profiles').upsert(payload);
+    return { error: upsertErr, payload };
+  };
+
+  const saveDisplayName = async () => {
+    if (!draftName.trim()) return;
+    setSavingName(true);
+    setNameSaveError('');
+    const nextName = draftName.trim();
+    const { error } = await persistProfilePatch({ display_name: nextName });
+    setSavingName(false);
+    if (error) {
+      setNameSaveError('Nie udało się zapisać. Spróbuj ponownie.');
+      return;
+    }
+    setProfile(prev => ({ ...prev, display_name: nextName }));
+    setEditingName(false);
+    if (onRenameSelf) await onRenameSelf(nextName);
+    if (onRefresh) await onRefresh();
+  };
+
+  const savePhone = async () => {
+    setSavingPhone(true);
+    setPhoneSaveError('');
+    const digits = draftPhone.replace(/\s/g, '') || null;
+    const { error } = await persistProfilePatch({ phone: digits });
+    setSavingPhone(false);
+    if (error) {
+      const hint = (error.message || '').replace(/\s+/g, ' ').trim();
+      setPhoneSaveError(hint ? hint.slice(0, 200) : 'Nie udało się zapisać numeru. Spróbuj ponownie.');
+      return;
+    }
+    await supabase.from('players').update({ phone: digits }).eq('owner_id', user.id).eq('linked_user_id', user.id);
+    setProfile(prev => ({ ...prev, phone: digits }));
+    setEditingPhone(false);
+    if (onRefresh) await onRefresh();
+  };
+
+  const totalMyGamesBalance = useMemo(
+    () => myGames.reduce((sum, g) => sum + (g.net_balance || 0), 0) / 100,
+    [myGames]
+  );
+
+  const displayName = profile?.display_name || user.email?.split('@')[0] || 'Gracz';
+
+  return (
+    <div className="p-4 space-y-5 pb-6">
+      <div className="px-1">
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-lg font-bold text-white tracking-tight">Profil</h2>
+          <button
+            onClick={onRefresh}
+            disabled={refreshBusy}
+            title="Odśwież dane z chmury"
+            className="text-xs border border-green-800 bg-black/30 hover:bg-black/50 disabled:opacity-40 rounded-lg px-2.5 py-1.5 text-green-200/80 flex items-center gap-1.5"
+          >
+            <IconRefresh />
+            {refreshBusy ? 'Sync...' : 'Sync'}
+          </button>
+        </div>
+        <p className="text-xs text-green-200/55 mt-0.5">Konto i synchronizacja</p>
+        <div className="mt-2 inline-flex items-center gap-2 text-xs text-emerald-300 bg-emerald-900/20 border border-emerald-800 rounded-lg px-2.5 py-1.5">
+          <span className="inline-block w-2 h-2 rounded-full bg-emerald-400" />
+          Synchronizacja OK
+        </div>
+      </div>
+      <div className="bg-black/30 border border-green-900 rounded-2xl p-4 space-y-3">
+        <div className="flex items-center gap-4">
+          <div className="w-14 h-14 rounded-full bg-rose-800 flex items-center justify-center text-2xl font-bold text-white shrink-0">
+            {displayName[0]?.toUpperCase()}
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2">
+              <p className="font-bold text-white text-lg truncate">{displayName}</p>
+              {!editingName && (
+                <button onClick={() => { setEditingName(true); setNameSaveError(''); }} className="text-green-700 hover:text-green-300 transition-colors shrink-0">
+                  <IconPencil size={14} />
+                </button>
+              )}
+            </div>
+            <div className="mt-0.5">
+              <p className="text-xs text-green-200/50 truncate">{profile?.email || user.email}</p>
+              <p className="text-[11px] text-green-200/35">Email konta jest stały po rejestracji.</p>
+            </div>
+            {!editingPhone ? (
+              <div className="flex items-center gap-1.5 mt-0.5">
+                <p className="text-xs text-green-200/40 truncate">
+                  {profile?.phone ? formatPhone(profile.phone) : 'Brak numeru telefonu'}
+                </p>
+                <button onClick={() => { setEditingPhone(true); setPhoneSaveError(''); }}
+                  className="text-green-800 hover:text-green-400 transition-colors shrink-0">
+                  <IconPencil />
+                </button>
+              </div>
+            ) : (
+              <div className="mt-1 space-y-1">
+                <div className="flex gap-2 items-center">
+                  <input value={draftPhone} onChange={e => { setDraftPhone(formatPhone(e.target.value)); setPhoneSaveError(''); }}
+                    type="tel" inputMode="numeric" maxLength={11} autoFocus placeholder="Numer telefonu"
+                    className="flex-1 bg-black/40 rounded-xl px-3 py-1.5 text-sm text-white border border-green-800 focus:outline-none focus:border-rose-600 transition-colors" />
+                  <button onClick={savePhone} disabled={savingPhone}
+                    className="shrink-0 text-xs bg-rose-800 hover:bg-rose-900 disabled:opacity-40 rounded-xl px-3 py-1.5 font-semibold transition-colors">
+                    {savingPhone ? '...' : 'Zapisz'}
+                  </button>
+                  <button onClick={() => { setEditingPhone(false); setDraftPhone(profile?.phone ? formatPhone(profile.phone) : ''); }}
+                    className="shrink-0 text-green-200/50 hover:text-white transition-colors px-1">✕</button>
+                </div>
+                {phoneSaveError && <p className="text-xs text-rose-400 px-1">{phoneSaveError}</p>}
+              </div>
+            )}
+          </div>
+          <button onClick={onSignOut}
+            className="shrink-0 text-xs text-rose-400 border border-rose-900/50 hover:bg-rose-900/30 px-3 py-2 rounded-xl transition-colors">
+            Wyloguj
+          </button>
+        </div>
+        {editingName && (
+          <div className="space-y-1 pt-1">
+            <div className="flex gap-2 items-center">
+              <input value={draftName} onChange={e => { setDraftName(e.target.value); setNameSaveError(''); }} autoFocus
+                className="flex-1 bg-black/40 rounded-xl px-3 py-2 text-sm text-white border border-green-800 focus:outline-none focus:border-rose-600 transition-colors" />
+              <button onClick={saveDisplayName} disabled={savingName || !draftName.trim()}
+                className="shrink-0 text-sm bg-rose-800 hover:bg-rose-900 disabled:opacity-40 rounded-xl px-4 py-2 font-semibold transition-colors">
+                {savingName ? '...' : 'Zapisz'}
+              </button>
+              <button onClick={() => { setEditingName(false); setDraftName(profile?.display_name || ''); setNameSaveError(''); }}
+                className="shrink-0 text-green-200/50 hover:text-white transition-colors px-1">✕</button>
+            </div>
+            {nameSaveError && <p className="text-xs text-rose-400 px-1">{nameSaveError}</p>}
+          </div>
+        )}
+        {syncMeta?.lastError && (
+          <div className="space-y-1">
+            <p className="text-xs text-rose-300">{summarizeSyncError(syncMeta.lastError)}</p>
+            <button
+              type="button"
+              onClick={() => setShowSyncDetails(v => !v)}
+              className="text-[11px] text-green-300/70 hover:text-green-200 underline"
+            >
+              {showSyncDetails ? 'Ukryj szczegóły' : 'Pokaż szczegóły'}
+            </button>
+            {showSyncDetails && <p className="text-[11px] text-rose-300/85 break-words">{syncMeta.lastError}</p>}
+          </div>
+        )}
+      </div>
+
+      {(syncMeta?.lastError || failedCloudSavesCount > 0) && (
+        <div className="bg-amber-950/35 border border-amber-800/45 rounded-2xl p-4 space-y-2">
+          <p className="text-xs font-semibold text-amber-200/90">Uwaga — synchronizacja sesji</p>
+          {syncMeta?.lastError && <p className="text-xs text-rose-300/95 break-words">{summarizeSyncError(syncMeta.lastError)}</p>}
+          {failedCloudSavesCount > 0 && (
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <p className="text-xs text-amber-100/85">{failedCloudSavesCount} {pluralPL(failedCloudSavesCount, 'sesja nie doszła do chmury', 'sesje nie doszły do chmury', 'sesji nie doszło do chmury')}.</p>
+              <button type="button" onClick={onRetrySyncFailed} disabled={retryingFailedSaves}
+                className="text-xs bg-amber-800 hover:bg-amber-700 disabled:opacity-50 rounded-lg px-3 py-1.5 font-semibold transition-colors shrink-0">
+                {retryingFailedSaves ? '...' : 'Ponów zapis'}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+      <p className="text-[11px] text-green-200/35 px-1">Konto i historia sesji są przechowywane w chmurze po zalogowaniu.</p>
+
+      <div className="bg-black/30 border border-green-900 rounded-2xl p-4 space-y-3">
+        <div>
+          <h3 className="text-sm font-semibold text-white">Zaproszenia do znajomych</h3>
+          <p className="text-xs text-green-200/50 mt-0.5">Akceptuj zaproszenia, aby połączyć konta automatycznie.</p>
+        </div>
+        {(pendingInvites || []).length === 0 ? (
+          <p className="text-xs text-green-200/45">Brak oczekujących zaproszeń.</p>
+        ) : (pendingInvites || []).map(invite => (
+          <div key={invite.id} className="rounded-xl border border-green-900/80 bg-black/25 p-3">
+            <p className="text-sm text-white">Zaproszenie dla: <span className="text-emerald-300">{invite.invitee_email}</span></p>
+            <p className="text-xs text-green-200/45 mt-1">Wysłane: {formatDate(invite.created_at)}</p>
+            <div className="flex gap-2 mt-3">
+              <button
+                onClick={async () => {
+                  setInviteBusyId(invite.id);
+                  setInviteMsg('');
+                  const err = await onAcceptInvite(invite.id);
+                  setInviteBusyId(null);
+                  setInviteMsg(err ? err : 'Zaproszenie zaakceptowane.');
+                }}
+                disabled={inviteBusyId === invite.id}
+                className="text-xs bg-emerald-800 hover:bg-emerald-700 disabled:opacity-40 rounded-xl px-3 py-2 font-semibold transition-colors"
+              >
+                Akceptuj
+              </button>
+              <button
+                onClick={async () => {
+                  setInviteBusyId(invite.id);
+                  setInviteMsg('');
+                  const err = await onRejectInvite(invite.id);
+                  setInviteBusyId(null);
+                  setInviteMsg(err ? err : 'Zaproszenie odrzucone.');
+                }}
+                disabled={inviteBusyId === invite.id}
+                className="text-xs bg-rose-900/50 hover:bg-rose-800 border border-rose-800 text-rose-300 rounded-xl px-3 py-2 transition-colors"
+              >
+                Odrzuć
+              </button>
+            </div>
+          </div>
+        ))}
+        {inviteMsg && <p className={`text-xs ${inviteMsg.includes('zaakceptowane') ? 'text-emerald-400' : inviteMsg.includes('odrzucone') ? 'text-green-300/70' : 'text-rose-400'}`}>{inviteMsg}</p>}
+      </div>
+
+      <div className="bg-black/30 border border-green-900 rounded-2xl p-4 space-y-3">
+        <div>
+          <h3 className="text-sm font-semibold text-white">Wysłane zaproszenia</h3>
+          <p className="text-xs text-green-200/50 mt-0.5">Statusy relacji: invited / accepted / rejected / revoked.</p>
+        </div>
+        {(outgoingInvites || []).length === 0 ? (
+          <p className="text-xs text-green-200/45">Brak wysłanych zaproszeń.</p>
+        ) : (outgoingInvites || []).map(invite => (
+          <div key={invite.id} className="rounded-xl border border-green-900/80 bg-black/25 p-3 space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-sm text-white truncate">{invite.invitee_email}</p>
+              <span className="text-[10px] border rounded-md px-1.5 py-0.5 text-green-200/80 border-green-800 bg-black/30">
+                {invite.status}
+              </span>
+            </div>
+            <p className="text-xs text-green-200/45">
+              Wysłane: {formatDate(invite.created_at)}
+              {invite.responded_at ? ` · Odpowiedź: ${formatDate(invite.responded_at)}` : ''}
+            </p>
+            {invite.status === 'pending' && (
+              <button
+                onClick={async () => {
+                  setInviteBusyId(invite.id);
+                  setInviteMsg('');
+                  const err = await onCancelInvite(invite.id);
+                  setInviteBusyId(null);
+                  setInviteMsg(err ? err : 'Zaproszenie cofnięte.');
+                }}
+                disabled={inviteBusyId === invite.id}
+                className="text-xs bg-orange-900/45 hover:bg-orange-800 border border-orange-800 text-orange-200 rounded-xl px-3 py-2 transition-colors"
+              >
+                {inviteBusyId === invite.id ? '...' : 'Cofnij zaproszenie'}
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+
+      <div>
+        <h2 className="text-lg font-bold text-white tracking-tight mb-3">Moje gry ({myGames.length})</h2>
+        {myGames.length > 0 && (
+          <div className={`rounded-2xl border p-4 mb-3 flex items-center justify-between ${totalMyGamesBalance > 0 ? 'bg-emerald-900/20 border-emerald-800' : totalMyGamesBalance < 0 ? 'bg-red-900/20 border-red-800/60' : 'bg-black/30 border-green-900'}`}>
+            <div>
+              <p className="text-xs text-green-200/60 uppercase tracking-wider font-medium">Łączny bilans</p>
+              <p className="text-xs text-green-200/40 mt-0.5">{myGames.length} {pluralPL(myGames.length, 'gra', 'gry', 'gier')} jako uczestnik</p>
+            </div>
+            <NetBadge value={totalMyGamesBalance} />
+          </div>
+        )}
+        {myGames.length === 0 ? (
+          <div className="text-center py-10 bg-black/20 rounded-2xl border border-dashed border-green-900">
+            <p className="text-green-200/50 text-sm">Brak gier.</p>
+            <p className="text-green-200/45 text-xs mt-1">Organizator musi połączyć Cię z kontem.</p>
+          </div>
+        ) : myGames.map(g => {
+          const net = g.net_balance != null ? g.net_balance / 100 : null;
+          const buyIn = g.total_buy_in / 100;
+          const cashOut = g.cash_out != null ? g.cash_out / 100 : null;
+          const date = new Date(g.session_date).toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit', year: 'numeric' });
+          return (
+            <div key={g.id} className="bg-black/30 border border-green-900 rounded-2xl px-4 py-3 flex items-center gap-3 mb-2">
+              <div className="flex-1 min-w-0">
+                <p className="font-semibold text-white text-sm">{date}</p>
+                <p className="text-xs text-green-200/55 tabular-nums">Pula: <span className="text-yellow-400">{formatPln(g.total_pot / 100)} PLN</span> · Buy-in: {formatPln(buyIn)} PLN</p>
+              </div>
+              {net != null ? <NetBadge value={net} /> : <span className="text-xs text-green-200/55">–</span>}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ─── App ──────────────────────────────────────────────────────────────────────
+
+const TABS = [
+  { key: 'players', label: 'Gracze', Icon: IconUsers, aria: 'Zakładka Gracze — baza osób' },
+  { key: 'session', label: 'Sesja', Icon: IconPlay, aria: 'Zakładka Sesja — buy-iny przy stole' },
+  { key: 'settlement', label: 'Wyniki', Icon: IconCalc, aria: 'Zakładka Wyniki — cash-outy i przelewy' },
+  { key: 'history', label: 'Historia', Icon: IconTrophy, aria: 'Zakładka Historia — archiwum i ranking' },
+  { key: 'profile', label: 'Profil', Icon: IconUser, aria: 'Zakładka Profil — konto i synchronizacja' },
+];
+
+const SCREEN_META = {
+  players: 'Dodaj stałych graczy, zanim zaczniesz sesję.',
+  session: 'Ustal buy-iny i kogo masz przy stole.',
+  settlement: '',
+  history: 'Archiwum sesji i ranking.',
+  profile: 'Konto i synchronizacja z chmurą.',
+};
+
+const ONBOARDING_KEY = 'poker_onboarding_dismissed';
+
+export default function App() {
+  const { user, loading: authLoading, emailConfirmed, setEmailConfirmed } = useAuth();
+  const [players, setPlayers] = useState(() => loadLS('poker_players', []));
+  const [sessionPlayers, setSessionPlayers] = useState(() => loadLS('poker_session', []));
+  const [defaultBuyIn, setDefaultBuyIn] = useState(() => loadLS('poker_default_buyin', 50));
+  const [tab, setTab] = useState('session');
+  const [transactions, setTransactions] = useState([]);
+  const [settled, setSettled] = useState(false);
+  const [history, setHistory] = useState(() => loadLS('poker_sessions_history', []));
+  const [sharedHistory, setSharedHistory] = useState([]);
+  const [pendingInvites, setPendingInvites] = useState([]);
+  const [outgoingInvites, setOutgoingInvites] = useState([]);
+  const [outgoingInviteMetaByEmail, setOutgoingInviteMetaByEmail] = useState({});
+  const [accountByEmail, setAccountByEmail] = useState({});
+  const [autoAddMeToSession, setAutoAddMeToSession] = useState(() => loadLS('poker_auto_add_me', true));
+  const [savingSession, setSavingSession] = useState(false);
+  const [saveStatus, setSaveStatus] = useState(null);
+  const [manualRefreshBusy, setManualRefreshBusy] = useState(false);
+  const [failedCloudSaves, setFailedCloudSaves] = useState(() => loadLS(FAILED_CLOUD_SAVES_KEY, []));
+  const [retryingFailedSaves, setRetryingFailedSaves] = useState(false);
+  const [syncMeta, setSyncMeta] = useState(() => sanitizeSyncMeta(loadLS(SYNC_META_KEY, { lastAttempt: null, lastSuccess: null, lastError: null })));
+  const [skipLiveSessionCloud, setSkipLiveSessionCloud] = useState(false);
+  const [cloudBanner, setCloudBanner] = useState(null);
+  const [syncChannelNonce, setSyncChannelNonce] = useState(0);
+  const [onboardingOpen, setOnboardingOpen] = useState(() => !loadLS(ONBOARDING_KEY, false));
+  const applyingRemoteSessionRef = useRef(false);
+  const lastDraftHashRef = useRef(buildDraftHash(defaultBuyIn, sessionPlayers));
+  const lastMergedLiveUpdatedAtRef = useRef(null);
+  const sessionPlayersRef = useRef(sessionPlayers);
+  const defaultBuyInRef = useRef(defaultBuyIn);
+
+  useDebouncedLocalStorage('poker_players', players);
+  useDebouncedLocalStorage('poker_session', sessionPlayers);
+  useDebouncedLocalStorage('poker_default_buyin', defaultBuyIn);
+  useDebouncedLocalStorage('poker_auto_add_me', autoAddMeToSession);
+  useDebouncedLocalStorage('poker_sessions_history', history);
+  useDebouncedLocalStorage(FAILED_CLOUD_SAVES_KEY, failedCloudSaves);
+  useDebouncedLocalStorage(SYNC_META_KEY, syncMeta);
+
+  const recordSyncAttempt = () => {
+    setSyncMeta(prev => ({ ...prev, lastAttempt: new Date().toISOString() }));
+  };
+  const recordSyncSuccess = () => {
+    setSyncMeta(prev => ({ ...prev, lastSuccess: new Date().toISOString(), lastError: null }));
+  };
+  const recordSyncError = msg => {
+    setSyncMeta(prev => ({ ...prev, lastError: msg || 'Błąd synchronizacji' }));
+  };
+  const notifyCloudFailure = msg => {
+    const m = msg || 'Błąd synchronizacji';
+    recordSyncError(m);
+    setCloudBanner(m);
+  };
+  const normalizeEmail = value => (value || '').trim().toLowerCase();
+  const findProfileByEmail = async emailNorm => {
+    if (!emailNorm) return null;
+    const { data, error } = await supabase.from('profiles').select('id').eq('email', emailNorm).maybeSingle();
+    if (error) throw error;
+    return data?.id || null;
+  };
+  const createInviteIfPossible = async (playerId, emailNorm) => {
+    if (!emailNorm || emailNorm === normalizeEmail(user?.email)) return false;
+    const profileId = await findProfileByEmail(emailNorm);
+    if (!profileId) return false;
+    const { error: inviteErr } = await supabase.from('friend_invites').insert({
+      requester_user_id: user.id,
+      requester_player_id: playerId,
+      invitee_email: emailNorm,
+    });
+    if (inviteErr && inviteErr.code !== '23505') throw inviteErr;
+    return true;
+  };
+
+  useEffect(() => {
+    if (!cloudBanner) return;
+    const t = setTimeout(() => setCloudBanner(null), 10000);
+    return () => clearTimeout(t);
+  }, [cloudBanner]);
+
+  useEffect(() => {
+    sessionPlayersRef.current = sessionPlayers;
+  }, [sessionPlayers]);
+  useEffect(() => {
+    defaultBuyInRef.current = defaultBuyIn;
+  }, [defaultBuyIn]);
+
+  useEffect(() => {
+    lastMergedLiveUpdatedAtRef.current = null;
+    setSkipLiveSessionCloud(false);
+  }, [user?.id]);
+
+  const refreshCloudData = useCallback(async () => {
+    if (!user) return;
+    const [playersRes, sessionsRes, sharedRes, invitesRes] = await Promise.all([
+      supabase.from('players').select('*').eq('owner_id', user.id).order('created_at'),
+      supabase.from('sessions').select('id, played_at, total_pot, session_players(player_id, player_name, total_buy_in, cash_out, net_balance), transfers(from_name, to_name, amount)').eq('owner_id', user.id).order('played_at'),
+      supabase.from('participations').select('*').eq('user_id', user.id).order('session_date'),
+      supabase.from('friend_invites').select('id, requester_user_id, requester_player_id, invitee_email, invitee_user_id, status, created_at, responded_at').order('created_at', { ascending: false }).limit(400),
+    ]);
+    let liveRes = { data: null, error: null };
+    if (!skipLiveSessionCloud) {
+      liveRes = await supabase.from('live_session_state').select('default_buy_in, session_players, updated_at').eq('owner_id', user.id).maybeSingle();
+      if (liveRes.error) {
+        if (isMissingLiveSessionTableError(liveRes.error)) {
+          setSkipLiveSessionCloud(true);
+          setSyncMeta(prev => ({ ...prev, lastError: null }));
+          liveRes = { data: null, error: null };
+        } else {
+          console.warn('refreshCloudData live_session_state', liveRes.error);
+        }
+      }
+    }
+    if (playersRes.error || sessionsRes.error) {
+      console.warn('refreshCloudData players/sessions', playersRes.error, sessionsRes.error);
+      try {
+        void logClientEvent('error', 'refresh_cloud_failed', {
+          players_error: playersRes.error?.message || null,
+          players_code: playersRes.error?.code || null,
+          sessions_error: sessionsRes.error?.message || null,
+          sessions_code: sessionsRes.error?.code || null
+        });
+      } catch (_) {}
+      return;
+    }
+    setSyncMeta(prev => (prev.lastError ? { ...prev, lastError: null } : prev));
+    if (sharedRes.error) console.warn('refreshCloudData participations', sharedRes.error);
+    if (invitesRes.error) console.warn('refreshCloudData friend_invites', invitesRes.error);
+
+    const pData = playersRes.data;
+    const sData = sessionsRes.data;
+    const sharedData = sharedRes.data;
+    const invitesData = invitesRes.data;
+    const liveDraft = liveRes.error ? null : liveRes.data;
+
+    const cloudPlayers = (pData || []).map(p => ({ id: p.id, name: p.name, phone: p.phone || '', email: p.email || '', linked_user_id: p.linked_user_id || null }));
+    setPlayers(prev => {
+      const seen = new Set(cloudPlayers.map(p => p.id));
+      const extras = prev.filter(p => !seen.has(p.id));
+      return extras.length ? [...cloudPlayers, ...extras] : cloudPlayers;
+    });
+
+    const mapSessionRow = s => ({
+      id: s.id, date: s.played_at, totalPot: s.total_pot / 100,
+      players: (s.session_players || []).map(sp => ({ id: sp.player_id || generateId(), name: sp.player_name, phone: '', totalBuyIn: sp.total_buy_in / 100, cashOut: sp.cash_out != null ? sp.cash_out / 100 : 0, netBalance: sp.net_balance != null ? sp.net_balance / 100 : 0 })),
+      transfers: (s.transfers || []).map(t => ({ from: t.from_name, to: t.to_name, amount: t.amount / 100 })),
+    });
+    const cloudHistory = (sData || []).map(mapSessionRow);
+    setHistory(prev => {
+      const ids = new Set(cloudHistory.map(s => s.id));
+      const localOnly = prev.filter(s => !ids.has(s.id) && !String(s.id).startsWith('shared:'));
+      if (localOnly.length === 0) return cloudHistory;
+      return [...cloudHistory, ...localOnly].sort((a, b) => new Date(a.date) - new Date(b.date));
+    });
+
+    if (!sharedRes.error) setSharedHistory(mapSharedParticipations(sharedData || []));
+    if (!invitesRes.error) {
+      const myEmail = (user.email || '').trim().toLowerCase();
+      const incoming = (invitesData || []).filter(inv =>
+        inv.status === 'pending' &&
+        inv.requester_user_id !== user.id && (
+          inv.invitee_user_id === user.id ||
+          (inv.invitee_email || '').trim().toLowerCase() === myEmail
+        )
+      );
+      setPendingInvites(incoming);
+      const outgoing = (invitesData || []).filter(inv => inv.requester_user_id === user.id && inv.status !== 'accepted');
+      setOutgoingInvites(outgoing);
+      const outgoingMap = {};
+      for (const inv of outgoing) {
+        const emailKey = normalizeEmail(inv.invitee_email);
+        if (!emailKey) continue;
+        const prev = outgoingMap[emailKey];
+        if (!prev || new Date(inv.created_at).getTime() > new Date(prev.created_at).getTime()) {
+          outgoingMap[emailKey] = {
+            id: inv.id,
+            status: inv.status,
+            created_at: inv.created_at,
+            responded_at: inv.responded_at || null,
+          };
+        }
+      }
+      setOutgoingInviteMetaByEmail(outgoingMap);
+    }
+    const playerEmails = [...new Set((cloudPlayers || []).map(p => normalizeEmail(p.email)).filter(Boolean))];
+    if (playerEmails.length === 0) {
+      setAccountByEmail({});
+    } else {
+      const { data: profileRows } = await supabase.from('profiles').select('email').in('email', playerEmails);
+      const existing = new Set((profileRows || []).map(r => normalizeEmail(r.email)));
+      const map = {};
+      for (const email of playerEmails) map[email] = existing.has(email);
+      setAccountByEmail(map);
+    }
+
+    if (liveDraft && !liveRes.error) {
+      const remoteTs = liveDraft.updated_at;
+      const lastPushMeta = loadLS(`poker_live_push_${user.id}`, null);
+      const lastLocalPushAt = lastPushMeta?.updated_at;
+      const remoteIsNewerThanOurPush = !lastLocalPushAt || isoToMs(remoteTs) > isoToMs(lastLocalPushAt);
+      const mergedRef = lastMergedLiveUpdatedAtRef.current;
+      const remoteNewerThanLastMerge = !mergedRef || isoToMs(remoteTs) > isoToMs(mergedRef);
+
+      if (remoteIsNewerThanOurPush && remoteNewerThanLastMerge) {
+        const remoteDefaultBuyIn = Number(liveDraft.default_buy_in) || 50;
+        const remoteSessionPlayers = normalizeDraftSessionPlayers(liveDraft.session_players);
+        const localNorm = normalizeDraftSessionPlayers(sessionPlayersRef.current);
+        if (!lastLocalPushAt && localNorm.length > 0 && remoteSessionPlayers.length === 0) {
+          lastMergedLiveUpdatedAtRef.current = remoteTs;
+          lastDraftHashRef.current = buildDraftHash(defaultBuyInRef.current, sessionPlayersRef.current);
+          saveLS(`poker_live_push_${user.id}`, { updated_at: remoteTs });
+        } else {
+          const remoteHash = buildDraftHash(remoteDefaultBuyIn, remoteSessionPlayers);
+          applyingRemoteSessionRef.current = true;
+          lastMergedLiveUpdatedAtRef.current = remoteTs;
+          lastDraftHashRef.current = remoteHash;
+          saveLS(`poker_live_push_${user.id}`, { updated_at: remoteTs });
+          setDefaultBuyIn(remoteDefaultBuyIn);
+          setSessionPlayers(remoteSessionPlayers);
+        }
+      }
+    }
+  }, [user?.id, skipLiveSessionCloud]);
+
+  useEffect(() => {
+    if (!user || !skipLiveSessionCloud) return;
+    const probe = async () => {
+      const { error } = await supabase.from('live_session_state').select('owner_id').eq('owner_id', user.id).limit(1).maybeSingle();
+      if (!error) setSkipLiveSessionCloud(false);
+    };
+    const soon = setTimeout(probe, 4000);
+    const id = setInterval(probe, 90000);
+    return () => { clearTimeout(soon); clearInterval(id); };
+  }, [user?.id, skipLiveSessionCloud]);
+
+  useEffect(() => {
+    refreshCloudData();
+  }, [refreshCloudData]);
+
+  useEffect(() => {
+    if (!user) return;
+    const ensureSelfPlayer = async () => {
+      const { error: rpcErr } = await supabase.rpc('sync_self_player');
+      if (rpcErr) {
+        const isMissing = rpcErr.code === 'PGRST202' || rpcErr.code === '42883';
+        if (!isMissing) {
+          notifyCloudFailure(rpcErr.message);
+        } else {
+          const existing = players.find(p => p.linked_user_id === user.id);
+          if (!existing) {
+            const fallbackName = user.email?.split('@')[0] || 'Ja';
+            await supabase.from('players').insert({
+              id: generateId(),
+              owner_id: user.id,
+              linked_user_id: user.id,
+              name: fallbackName,
+              email: (user.email || '').toLowerCase() || null,
+            });
+          }
+        }
+      }
+      void refreshCloudData();
+    };
+    void ensureSelfPlayer();
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!user) return;
+    let timer = null;
+    let inFlight = false;
+    let reconnectTimer = null;
+    let reconnectScheduled = false;
+    const scheduleRefresh = () => {
+      clearTimeout(timer);
+      timer = setTimeout(async () => {
+        if (inFlight) return;
+        inFlight = true;
+        try {
+          await refreshCloudData();
+        } finally {
+          inFlight = false;
+        }
+      }, 300);
+    };
+    const scheduleReconnect = reason => {
+      if (reconnectScheduled) return;
+      reconnectScheduled = true;
+      reconnectTimer = setTimeout(() => {
+        reconnectScheduled = false;
+        setSyncChannelNonce(n => n + 1);
+      }, 1200);
+      if (reason) {
+        try { console.warn('sync channel reconnect scheduled:', reason); } catch (_) {}
+        try { void logClientEvent('warn', 'realtime_reconnect', { reason: String(reason) }); } catch (_) {}
+      }
+    };
+    let channel = supabase.channel(`sync-${user.id}-${syncChannelNonce}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'players', filter: `owner_id=eq.${user.id}` }, scheduleRefresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'sessions', filter: `owner_id=eq.${user.id}` }, scheduleRefresh);
+    if (!skipLiveSessionCloud) {
+      channel = channel.on('postgres_changes', { event: '*', schema: 'public', table: 'live_session_state', filter: `owner_id=eq.${user.id}` }, scheduleRefresh);
+    }
+    channel = channel
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'participations', filter: `user_id=eq.${user.id}` }, scheduleRefresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'friend_invites' }, scheduleRefresh)
+      .subscribe(status => {
+        if (status === 'SUBSCRIBED') {
+          scheduleRefresh();
+          return;
+        }
+        if (status === 'CHANNEL_ERROR' || status === 'CLOSED' || status === 'TIMED_OUT') {
+          scheduleReconnect(status);
+        }
+      });
+
+    const poll = setInterval(() => {
+      if (!document.hidden) scheduleRefresh();
+    }, 6000);
+
+    const onFocus = () => scheduleRefresh();
+    const onOnline = () => scheduleRefresh();
+    const onVisibility = () => {
+      if (!document.hidden) scheduleRefresh();
+    };
+    const onPageShow = () => scheduleRefresh();
+    window.addEventListener('focus', onFocus);
+    window.addEventListener('online', onOnline);
+    window.addEventListener('pageshow', onPageShow);
+    document.addEventListener('visibilitychange', onVisibility);
+
+    return () => {
+      clearTimeout(timer);
+      clearTimeout(reconnectTimer);
+      clearInterval(poll);
+      window.removeEventListener('focus', onFocus);
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('pageshow', onPageShow);
+      document.removeEventListener('visibilitychange', onVisibility);
+      supabase.removeChannel(channel);
+    };
+  }, [user?.id, refreshCloudData, skipLiveSessionCloud, syncChannelNonce]);
+
+  useEffect(() => {
+    if (!user || !autoAddMeToSession) return;
+    if (sessionPlayers.length > 0) return;
+    const selfPlayer = players.find(p => p.linked_user_id === user.id);
+    if (!selfPlayer) return;
+    setSessionPlayers([{ playerId: selfPlayer.id, buyIns: [defaultBuyIn], cashOut: '' }]);
+  }, [user?.id, players, sessionPlayers.length, defaultBuyIn, autoAddMeToSession]);
+  const combinedHistory = useMemo(
+    () => [...history, ...sharedHistory].sort((a, b) => new Date(a.date) - new Date(b.date)),
+    [history, sharedHistory]
+  );
+
+  const totalPot = sessionPlayers.reduce((sum, sp) => sum + getTotalBuyIn(sp), 0);
+  const addFailedCloudSave = payload => {
+    setFailedCloudSaves(prev => {
+      const idx = prev.findIndex(p => p.sessionId === payload.sessionId);
+      if (idx === -1) return [...prev, payload];
+      const next = [...prev];
+      next[idx] = payload;
+      return next;
+    });
+  };
+  const removeFailedCloudSave = sessionId => {
+    setFailedCloudSaves(prev => prev.filter(p => p.sessionId !== sessionId));
+  };
+
+  const insertRows = async (table, rows) => {
+    if (!rows || rows.length === 0) return;
+    const { error } = await supabase.from(table).insert(rows);
+    if (error && error.code !== '23505') throw error;
+  };
+
+  const createMissingSessionPlayersError = message => {
+    const err = new Error(message || 'Nie znaleziono części graczy użytych w sesji.');
+    err.code = 'MISSING_SESSION_PLAYERS';
+    return err;
+  };
+
+  const repairSessionPlayersRows = async (sessionPlayersRows = []) => {
+    if (!user || !sessionPlayersRows.length) return sessionPlayersRows;
+    const ids = [...new Set(sessionPlayersRows.map(r => r.player_id).filter(Boolean))];
+    if (!ids.length) return sessionPlayersRows;
+    const { data: existingRows, error: existingErr } = await supabase
+      .from('players')
+      .select('id')
+      .eq('owner_id', user.id)
+      .in('id', ids);
+    if (existingErr) throw existingErr;
+    const existing = new Set((existingRows || []).map(r => r.id));
+    const missing = sessionPlayersRows.filter(r => !existing.has(r.player_id));
+    if (missing.length === 0) return sessionPlayersRows;
+
+    const { data: allPlayers, error: allErr } = await supabase
+      .from('players')
+      .select('id,name')
+      .eq('owner_id', user.id);
+    if (allErr) throw allErr;
+    const byName = new Map();
+    for (const p of (allPlayers || [])) {
+      const key = (p.name || '').trim().toLowerCase();
+      if (!key) continue;
+      if (!byName.has(key)) byName.set(key, []);
+      byName.get(key).push(p.id);
+    }
+    const patched = sessionPlayersRows.map(r => ({ ...r }));
+    const usedIds = new Set(patched.filter(r => existing.has(r.player_id)).map(r => r.player_id));
+    let repaired = 0;
+    for (const row of patched) {
+      if (existing.has(row.player_id)) continue;
+      const key = (row.player_name || '').trim().toLowerCase();
+      const candidates = (byName.get(key) || []).filter(id => !usedIds.has(id));
+      if (candidates.length !== 1) {
+        throw createMissingSessionPlayersError(
+          'Nie znaleziono części graczy użytych w tej sesji. Otwórz sesję ponownie i wybierz graczy z aktualnej listy.'
+        );
+      }
+      row.player_id = candidates[0];
+      usedIds.add(candidates[0]);
+      repaired++;
+    }
+    if (repaired > 0) {
+      setCloudBanner(`Naprawiono ${repaired} ${pluralPL(repaired, 'powiązanie gracza', 'powiązania graczy', 'powiązań graczy')} przed zapisem do chmury.`);
+    }
+    return patched;
+  };
+
+  const persistSessionInsertsSequential = async (sessionRow, sessionPlayersRows, transferRows, participationRows) => {
+    const { error: sessionErr } = await supabase.from('sessions').insert(sessionRow);
+    if (sessionErr) throw sessionErr;
+    await insertRows('session_players', sessionPlayersRows);
+    await insertRows('transfers', transferRows);
+    await insertRows('participations', participationRows);
+  };
+
+  const persistSessionSaveCloud = async (sessionRow, sessionPlayersRows, transferRows, participationRows) => {
+    const repairedSessionPlayersRows = await repairSessionPlayersRows(sessionPlayersRows);
+    const args = buildSessionRpcArgs(sessionRow, repairedSessionPlayersRows, transferRows, participationRows);
+    const { error } = await supabase.rpc('save_session_atomic', args);
+    if (!error) return repairedSessionPlayersRows;
+    if (!isRpcMissingError(error)) throw error;
+    await persistSessionInsertsSequential(sessionRow, repairedSessionPlayersRows, transferRows, participationRows);
+    return repairedSessionPlayersRows;
+  };
+
+  const persistSessionUpdateCloud = async (sessionRow, sessionPlayersRows, transferRows, participationRows) => {
+    const repairedSessionPlayersRows = await repairSessionPlayersRows(sessionPlayersRows);
+    const args = buildSessionRpcArgs(sessionRow, repairedSessionPlayersRows, transferRows, participationRows);
+    const { error } = await supabase.rpc('update_session_atomic', args);
+    if (!error) return;
+    if (!isRpcMissingError(error)) throw error;
+    const { error: uErr } = await supabase.from('sessions').update({ played_at: sessionRow.played_at, total_pot: sessionRow.total_pot }).eq('id', sessionRow.id).eq('owner_id', sessionRow.owner_id);
+    if (uErr) throw uErr;
+    const { error: d1 } = await supabase.from('session_players').delete().eq('session_id', sessionRow.id);
+    if (d1) throw d1;
+    const { error: d2 } = await supabase.from('transfers').delete().eq('session_id', sessionRow.id);
+    if (d2) throw d2;
+    const { error: d3 } = await supabase.from('participations').delete().eq('session_id', sessionRow.id);
+    if (d3) throw d3;
+    await insertRows('session_players', repairedSessionPlayersRows);
+    await insertRows('transfers', transferRows);
+    await insertRows('participations', participationRows);
+  };
+
+  const retryFailedSaves = async () => {
+    if (!user || failedCloudSaves.length === 0 || retryingFailedSaves) return;
+    setRetryingFailedSaves(true);
+    recordSyncAttempt();
+    let success = 0;
+    let failed = 0;
+    let lastErr = null;
+    for (const item of failedCloudSaves) {
+      try {
+        await persistSessionSaveCloud(item.sessionRow, item.sessionPlayersRows, item.transferRows, item.participationRows);
+        removeFailedCloudSave(item.sessionId);
+        success++;
+      } catch (e) {
+        if (e?.code === 'MISSING_SESSION_PLAYERS' || isSessionPlayerFkError(e)) {
+          // This payload is stale and cannot be retried automatically.
+          removeFailedCloudSave(item.sessionId);
+        }
+        failed++;
+        lastErr = e?.message || String(e);
+        console.error('Retry cloud save failed:', e);
+      }
+    }
+    setRetryingFailedSaves(false);
+    if (success > 0) recordSyncSuccess();
+    if (failed > 0) recordSyncError(lastErr);
+    if (success > 0 && failed === 0) {
+      setSaveStatus({ type: 'ok', message: 'Udało się dosłać wszystkie zaległe sesje do chmury.' });
+    } else if (success > 0) {
+      setSaveStatus({ type: 'error', message: 'Część zaległych sesji nadal czeka na zapis do chmury.' });
+    } else if (failed > 0) {
+      setSaveStatus({ type: 'error', message: 'Nie udało się dosłać zaległych sesji. Spróbuj ponownie później.' });
+    }
+  };
+  useEffect(() => {
+    if (!user || failedCloudSaves.length === 0 || retryingFailedSaves) return;
+    const timer = setTimeout(() => {
+      retryFailedSaves();
+    }, 1200);
+    return () => clearTimeout(timer);
+  }, [user?.id, failedCloudSaves.length]);
+
+  useEffect(() => {
+    if (!user || skipLiveSessionCloud) return;
+    if (applyingRemoteSessionRef.current) {
+      applyingRemoteSessionRef.current = false;
+      return;
+    }
+    const draftHash = buildDraftHash(defaultBuyIn, sessionPlayers);
+    if (draftHash === lastDraftHashRef.current) return;
+    const timer = setTimeout(async () => {
+      const payload = {
+        owner_id: user.id,
+        default_buy_in: Number(defaultBuyIn) || 50,
+        session_players: normalizeDraftSessionPlayers(sessionPlayers),
+        updated_at: new Date().toISOString(),
+      };
+      const { error } = await supabase.from('live_session_state').upsert(payload, { onConflict: 'owner_id' });
+      if (error) {
+        if (isMissingLiveSessionTableError(error)) {
+          setSkipLiveSessionCloud(true);
+          setSyncMeta(prev => ({ ...prev, lastError: null }));
+          console.warn('Supabase: brak tabeli live_session_state. W Dashboard → SQL uruchom plik supabase/migrations/002_live_session_state.sql');
+        } else {
+          recordSyncError(error.message || 'Błąd synchronizacji aktywnej sesji');
+        }
+      } else {
+        lastDraftHashRef.current = draftHash;
+        lastMergedLiveUpdatedAtRef.current = payload.updated_at;
+        saveLS(`poker_live_push_${user.id}`, { updated_at: payload.updated_at });
+      }
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [user?.id, defaultBuyIn, sessionPlayers, skipLiveSessionCloud]);
+
+  const playerById = useMemo(
+    () => Object.fromEntries(players.map(p => [p.id, p])),
+    [players]
+  );
+
+  const addPlayer = async (name, phone, email) => {
+    const emailNorm = normalizeEmail(email);
+    const phoneDigits = normalizePhoneDigits(phone);
+    if (phoneDigits.length >= 9) {
+      const dup = players.some(p => normalizePhoneDigits(p.phone) === phoneDigits);
+      if (dup) {
+        setCloudBanner('Masz już gracza z tym numerem telefonu. Zmień numer albo edytuj istniejący wpis.');
+        return;
+      }
+    }
+    const id = generateId();
+    const row = { id, name, phone, email: emailNorm };
+    setPlayers(prev => [...prev, row]);
+    if (!user) return;
+    const { error } = await supabase.from('players').insert({ id, owner_id: user.id, name, phone: phone || null, email: emailNorm || null });
+    if (error) {
+      setPlayers(prev => prev.filter(p => p.id !== id));
+      if (error.code === '23505') {
+        notifyCloudFailure('Ten numer jest już przypisany do innego gracza na Twojej liście.');
+      } else {
+        notifyCloudFailure(error.message);
+      }
+    } else {
+      try {
+        const inviteCreated = await createInviteIfPossible(id, emailNorm);
+        if (inviteCreated) {
+          setCloudBanner('Gracz dodany. Zaproszenie zostało wysłane i pojawi się u znajomego w Profilu.');
+        } else if (emailNorm) {
+          setCloudBanner('Gracz dodany, ale email nie ma jeszcze konta. Status: Brak konta.');
+        }
+      } catch (inviteErr) {
+        notifyCloudFailure(inviteErr.message);
+      }
+      void refreshCloudData();
+    }
+  };
+  const updatePlayer = async (id, name, phone, email) => {
+    const prevRow = players.find(p => p.id === id);
+    const emailNorm = normalizeEmail(email);
+    const phoneDigits = normalizePhoneDigits(phone);
+    if (phoneDigits.length >= 9) {
+      const dup = players.some(p => p.id !== id && normalizePhoneDigits(p.phone) === phoneDigits);
+      if (dup) {
+        setCloudBanner('Masz już innego gracza z tym numerem telefonu.');
+        return;
+      }
+    }
+    setPlayers(prev => prev.map(p => p.id === id ? { ...p, name, phone, email: emailNorm } : p));
+    if (!user) return;
+    const { error } = await supabase.from('players').update({ name, phone: phone || null, email: emailNorm || null }).eq('id', id);
+    if (error && prevRow) {
+      setPlayers(prev => prev.map(p => p.id === id ? prevRow : p));
+      if (error.code === '23505') {
+        notifyCloudFailure('Ten numer jest już przypisany do innego gracza na Twojej liście.');
+      } else {
+        notifyCloudFailure(error.message);
+      }
+    } else if (!error) {
+      try {
+        const inviteCreated = await createInviteIfPossible(id, emailNorm);
+        if (inviteCreated && normalizeEmail(prevRow?.email) !== emailNorm) {
+          setCloudBanner('Email zaktualizowany. Zaproszenie zostało wysłane.');
+        }
+      } catch (inviteErr) {
+        notifyCloudFailure(inviteErr.message);
+      }
+      void refreshCloudData();
+    }
+  };
+  const acceptInvite = async (inviteId) => {
+    const { error } = await supabase.rpc('accept_friend_invite', { p_invite_id: inviteId });
+    if (error) {
+      notifyCloudFailure(error.message);
+      return 'Nie udało się zaakceptować zaproszenia.';
+    }
+    void refreshCloudData();
+    return null;
+  };
+
+  const rejectInvite = async (inviteId) => {
+    const { error } = await supabase.rpc('reject_friend_invite', { p_invite_id: inviteId });
+    if (error) {
+      notifyCloudFailure(error.message);
+      return 'Nie udało się odrzucić zaproszenia.';
+    }
+    void refreshCloudData();
+    return null;
+  };
+  const cancelInvite = async inviteId => {
+    const { error } = await supabase.rpc('cancel_friend_invite', { p_invite_id: inviteId });
+    if (error) {
+      notifyCloudFailure(error.message);
+      return 'Nie udało się cofnąć zaproszenia.';
+    }
+    void refreshCloudData();
+    return null;
+  };
+  const unlinkPlayer = async (playerId) => {
+    const prevRow = players.find(p => p.id === playerId);
+    setPlayers(prev => prev.map(p => p.id === playerId ? { ...p, linked_user_id: null } : p));
+    if (!user) return true;
+    const { error: rpcErr } = await supabase.rpc('remove_friend_player_link', { p_player_id: playerId });
+    if (rpcErr) {
+      if (prevRow) setPlayers(prev => prev.map(p => p.id === playerId ? prevRow : p));
+      notifyCloudFailure(rpcErr.message);
+      void refreshCloudData();
+      if (isFriendLinkRpcMissing(rpcErr)) {
+        return false;
+      }
+      return false;
+    }
+    void refreshCloudData();
+    return true;
+  };
+  const removePlayer = async id => {
+    const prevP = players;
+    const prevSp = sessionPlayers;
+    const row = players.find(p => p.id === id);
+    if (user && row?.linked_user_id === user.id) {
+      setCloudBanner('Nie możesz usunąć własnego profilu gracza.');
+      return;
+    }
+    if (user && row?.linked_user_id) {
+      const ok = await unlinkPlayer(id);
+      if (!ok) return;
+    }
+    setPlayers(prev => prev.filter(p => p.id !== id));
+    setSessionPlayers(prev => prev.filter(sp => sp.playerId !== id));
+    if (!user) return;
+    const { error } = await supabase.from('players').delete().eq('id', id);
+    if (error) {
+      setPlayers(prevP);
+      setSessionPlayers(prevSp);
+      notifyCloudFailure(error.message);
+    } else {
+      void refreshCloudData();
+    }
+  };
+  const addToSession = playerId => {
+    if (sessionPlayers.some(sp => sp.playerId === playerId)) return;
+    setSettled(false);
+    setSessionPlayers(prev => [...prev, { playerId, buyIns: [defaultBuyIn], cashOut: '' }]);
+  };
+  const removeFromSession = playerId => { setSettled(false); setSessionPlayers(prev => prev.filter(sp => sp.playerId !== playerId)); };
+  const addBuyIn = playerId => { setSettled(false); setSessionPlayers(prev => prev.map(sp => sp.playerId === playerId ? { ...sp, buyIns: [...sp.buyIns, defaultBuyIn] } : sp)); };
+  const removeBuyIn = playerId => { setSettled(false); setSessionPlayers(prev => prev.map(sp => sp.playerId === playerId && sp.buyIns.length > 1 ? { ...sp, buyIns: sp.buyIns.slice(0, -1) } : sp)); };
+  const setCashOut = (playerId, value) => { setSettled(false); setSessionPlayers(prev => prev.map(sp => sp.playerId === playerId ? { ...sp, cashOut: value.replace(/[^0-9.]/g, '') } : sp)); };
+
+  const handleCalculate = () => {
+    const entries = sessionPlayers.flatMap(sp => {
+      const p = playerById[sp.playerId] ?? { name: `Gracz (${sp.playerId.slice(0, 6)})`, phone: '' };
+      return [{ name: p.name, phone: p.phone, cents: plnToCents(parseFloat(sp.cashOut) || 0) - plnToCents(getTotalBuyIn(sp)) }];
+    });
+    setTransactions(settleDebts(entries));
+    setSettled(true);
+  };
+
+  const resetSession = () => { setSessionPlayers([]); setTransactions([]); setSettled(false); setTab('session'); };
+
+  const saveAndFinishSession = async () => {
+    if (savingSession) return;
+    const sessionId = generateId();
+    const sessionDate = new Date().toISOString();
+    const sessionPlrs = sessionPlayers.map(sp => {
+      const player = playerById[sp.playerId];
+      const totalBuyIn = getTotalBuyIn(sp);
+      const cashOut = parseFloat(sp.cashOut) || 0;
+      return { id: sp.playerId, name: player?.name ?? '?', phone: player?.phone ?? '', totalBuyIn, cashOut, netBalance: cashOut - totalBuyIn };
+    });
+    const session = { id: sessionId, date: sessionDate, totalPot, players: sessionPlrs, transfers: transactions };
+    const sessionRow = {
+      id: sessionId,
+      owner_id: user?.id,
+      played_at: sessionDate,
+      total_pot: plnToCents(totalPot),
+    };
+    const sessionPlayersRows = sessionPlrs.map(p => ({
+      session_id: sessionId,
+      player_id: p.id,
+      player_name: p.name,
+      total_buy_in: plnToCents(p.totalBuyIn),
+      cash_out: plnToCents(p.cashOut),
+    }));
+    const transferRows = transactions.map(t => ({
+      session_id: sessionId,
+      from_name: t.from,
+      to_name: t.to,
+      amount: plnToCents(t.amount),
+    }));
+    const linkedPlrs = sessionPlrs.filter(p => playerById[p.id]?.linked_user_id);
+    const participationRows = linkedPlrs.map(p => ({
+      user_id: playerById[p.id].linked_user_id,
+      session_id: sessionId,
+      player_name: p.name,
+      total_buy_in: plnToCents(p.totalBuyIn),
+      cash_out: plnToCents(p.cashOut),
+      session_date: sessionDate,
+      total_pot: plnToCents(totalPot),
+    }));
+    setSaveStatus(null);
+    setSavingSession(true);
+    setHistory(prev => [...prev, session]);
+    resetSession();
+    setTab('history');
+    if (user) {
+      recordSyncAttempt();
+      try {
+        await persistSessionSaveCloud(sessionRow, sessionPlayersRows, transferRows, participationRows);
+        removeFailedCloudSave(sessionId);
+        void refreshCloudData();
+        recordSyncSuccess();
+        setSaveStatus({ type: 'ok', message: 'Sesja zapisana w chmurze.' });
+      } catch (e) {
+        const msg = e?.message || String(e);
+        notifyCloudFailure(msg);
+        if (e?.code === 'MISSING_SESSION_PLAYERS' || isSessionPlayerFkError(e)) {
+          setSaveStatus({
+            type: 'error',
+            message: 'Sesja zapisana lokalnie. Część graczy nie istnieje już w chmurze — otwórz nową sesję i wybierz graczy ponownie z listy.',
+          });
+        } else {
+          addFailedCloudSave({ sessionId, sessionRow, sessionPlayersRows, transferRows, participationRows });
+          setSaveStatus({ type: 'error', message: 'Sesja zapisana lokalnie. Chmura nie zapisała wszystkiego, spróbuj ponownie później.' });
+        }
+        console.error('Cloud save failed:', e);
+        try {
+          void logClientEvent('error', 'save_session_failed', {
+            message: msg?.slice?.(0, 300) || String(e),
+            code: e?.code || null,
+            classifier: (e?.code === 'MISSING_SESSION_PLAYERS' || isSessionPlayerFkError(e)) ? 'missing_players' : 'other',
+            session_id: sessionId
+          });
+        } catch (_) {}
+      }
+    }
+    setSavingSession(false);
+  };
+
+  const updateSession = async (id, updated) => {
+    const prevSnap = history.find(s => s.id === id);
+    if (!prevSnap) return 'Nie znaleziono sesji.';
+    setHistory(prev => prev.map(s => s.id === id ? updated : s));
+    if (!user || String(id).startsWith('shared:')) return null;
+    recordSyncAttempt();
+    try {
+      const sessionRow = {
+        id,
+        owner_id: user.id,
+        played_at: updated.date,
+        total_pot: plnToCents(updated.totalPot),
+      };
+      const sessionPlayersRows = updated.players.map(p => ({
+        session_id: id,
+        player_id: p.id,
+        player_name: p.name,
+        total_buy_in: plnToCents(p.totalBuyIn),
+        cash_out: plnToCents(p.cashOut),
+      }));
+      const transferRows = updated.transfers.map(t => ({
+        session_id: id,
+        from_name: t.from,
+        to_name: t.to,
+        amount: plnToCents(t.amount),
+      }));
+      const participationRows = [];
+      for (const p of updated.players) {
+        const pl = playerById[p.id];
+        if (pl?.linked_user_id) {
+          participationRows.push({
+            user_id: pl.linked_user_id,
+            session_id: id,
+            player_name: p.name,
+            total_buy_in: plnToCents(p.totalBuyIn),
+            cash_out: plnToCents(p.cashOut),
+            session_date: updated.date,
+            total_pot: plnToCents(updated.totalPot),
+          });
+        }
+      }
+      await persistSessionUpdateCloud(sessionRow, sessionPlayersRows, transferRows, participationRows);
+      void refreshCloudData();
+      recordSyncSuccess();
+      return null;
+    } catch (e) {
+      const msg = e?.message || String(e);
+      setHistory(prev => prev.map(s => s.id === id ? prevSnap : s));
+      notifyCloudFailure(msg);
+      console.error('updateSession cloud failed:', e);
+      return 'Edycja jest zapisana tylko lokalnie. Chmura nie przyjęła zmian — spróbuj ponownie.';
+    }
+  };
+  const deleteSession = async (id) => {
+    if (String(id).startsWith('shared:')) return;
+    const prevEntry = history.find(s => s.id === id);
+    setHistory(prev => prev.filter(s => s.id !== id));
+    if (!user) return;
+    const { error: e1 } = await supabase.from('transfers').delete().eq('session_id', id);
+    if (e1) {
+      if (prevEntry) setHistory(prev => [...prev, prevEntry].sort((a, b) => new Date(a.date) - new Date(b.date)));
+      notifyCloudFailure(e1.message);
+      return;
+    }
+    const { error: e2 } = await supabase.from('session_players').delete().eq('session_id', id);
+    if (e2) {
+      if (prevEntry) setHistory(prev => [...prev, prevEntry].sort((a, b) => new Date(a.date) - new Date(b.date)));
+      notifyCloudFailure(e2.message);
+      return;
+    }
+    const { error: e3 } = await supabase.from('participations').delete().eq('session_id', id);
+    if (e3) {
+      if (prevEntry) setHistory(prev => [...prev, prevEntry].sort((a, b) => new Date(a.date) - new Date(b.date)));
+      notifyCloudFailure(e3.message);
+      return;
+    }
+    const { error: e4 } = await supabase.from('sessions').delete().eq('id', id);
+    if (e4 && prevEntry) {
+      setHistory(prev => [...prev, prevEntry].sort((a, b) => new Date(a.date) - new Date(b.date)));
+      notifyCloudFailure(e4.message);
+    } else if (!e4) {
+      void refreshCloudData();
+    }
+  };
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
+    setPlayers([]);
+    setHistory([]);
+    setSharedHistory([]);
+    setTab('session');
+  };
+  const handleManualRefresh = async () => {
+    setManualRefreshBusy(true);
+    try {
+      await refreshCloudData();
+    } finally {
+      setManualRefreshBusy(false);
+    }
+  };
+  const syncSelfPlayerName = async nextName => {
+    if (!user || !nextName) return;
+    const myEmail = normalizeEmail(user.email);
+    const selfIds = players
+      .filter(p => p.linked_user_id === user.id || normalizeEmail(p.email) === myEmail)
+      .map(p => p.id);
+    if (selfIds.length === 0) return;
+    setPlayers(prev => prev.map(p => selfIds.includes(p.id) ? { ...p, name: nextName } : p));
+    const { error: playersErr } = await supabase.from('players').update({ name: nextName }).eq('owner_id', user.id).eq('linked_user_id', user.id);
+    if (playersErr) notifyCloudFailure(playersErr.message);
+  };
+
+  if (authLoading) return <LoadingScreen />;
+  if (emailConfirmed) return <EmailConfirmedScreen onContinue={() => setEmailConfirmed(false)} />;
+  if (!user) return <AuthScreen />;
+
+  return (
+    <div className="min-h-screen bg-green-950 text-white">
+      <div className="flex flex-col min-h-screen w-full max-w-lg mx-auto">
+        <header className="sticky top-0 z-10 bg-green-950/90 backdrop-blur-sm border-b border-green-900 px-4 py-3 flex items-center justify-between shrink-0">
+          <div className="min-w-0 pr-2">
+            <h1 className="text-lg font-bold text-white tracking-tight">♠ Poker Settler</h1>
+            {sessionPlayers.length > 0 ? (
+              <p className="text-xs text-green-200/65 mt-0.5 leading-snug">
+                Pula: <span className="text-yellow-400 font-semibold tabular-nums">{formatPln(totalPot)} PLN</span>
+                <span className="text-green-200/45"> · {SCREEN_META[tab]}</span>
+              </p>
+            ) : (
+              <p className="text-xs text-green-200/60 mt-0.5 leading-snug">{SCREEN_META[tab]}</p>
+            )}
+          </div>
+          <span className="text-xs text-green-200/60 bg-black/30 rounded-full px-2.5 py-1 shrink-0 text-right leading-tight min-w-[3rem]">
+            <span className="block font-semibold tabular-nums">{tab === 'players' ? players.length : sessionPlayers.length}</span>
+            <span className="block text-[10px] text-green-200/45 font-normal">{tab === 'players' ? 'w liście' : 'w sesji'}</span>
+          </span>
+        </header>
+
+        {onboardingOpen && (
+          <div className="px-4 py-3 bg-emerald-950/50 border-b border-emerald-900/60 shrink-0" role="region" aria-label="Wprowadzenie">
+            <p className="text-xs text-emerald-100/90 leading-relaxed">
+              <span className="font-semibold text-emerald-300">Start:</span>{' '}
+              <span className="text-emerald-100/85">1) Gracze</span> — baza osób.{' '}
+              <span className="text-emerald-100/85">2) Sesja</span> — buy-iny.{' '}
+              <span className="text-emerald-100/85">3) Wyniki</span> — cash-outy i przelewy.{' '}
+              <span className="text-emerald-100/85">4) Historia</span> — archiwum.
+            </p>
+            <button
+              type="button"
+              onClick={() => { saveLS(ONBOARDING_KEY, true); setOnboardingOpen(false); }}
+              className="mt-2 text-xs font-semibold bg-emerald-800/80 hover:bg-emerald-700 text-white rounded-lg px-3 py-1.5 transition-colors">
+              Rozumiem, ukryj
+            </button>
+          </div>
+        )}
+
+        {cloudBanner && (
+          <div className="px-4 py-2 bg-yellow-900/40 border-b border-yellow-800/50 flex items-start justify-between gap-2 shrink-0">
+            <p className="text-xs text-yellow-100/90 leading-snug flex-1">{cloudBanner}</p>
+            <button type="button" onClick={() => setCloudBanner(null)} className="text-xs text-yellow-200/80 hover:text-white shrink-0 px-1" aria-label="Zamknij">✕</button>
+          </div>
+        )}
+
+        <main className="flex-1 main-scroll-pad">
+          {tab === 'players' && <PlayersTab players={players} sessionPlayers={sessionPlayers} onAddPlayer={addPlayer} onUpdatePlayer={updatePlayer} onRemovePlayer={removePlayer} onAddToSession={addToSession} onUnlinkPlayer={unlinkPlayer} currentUserId={user.id} accountByEmail={accountByEmail} outgoingInviteMetaByEmail={outgoingInviteMetaByEmail} />}
+          {tab === 'session' && <SessionTab players={players} sessionPlayers={sessionPlayers} defaultBuyIn={defaultBuyIn} totalPot={totalPot} autoAddMeToSession={autoAddMeToSession} onToggleAutoAddMe={setAutoAddMeToSession} onDefaultBuyInChange={setDefaultBuyIn} onAddBuyIn={addBuyIn} onRemoveBuyIn={removeBuyIn} onRemoveFromSession={removeFromSession} onAddToSession={addToSession} onGoToSettlement={() => setTab('settlement')} />}
+          {tab === 'settlement' && <SettlementTab players={players} sessionPlayers={sessionPlayers} transactions={transactions} settled={settled} totalPot={totalPot} onSetCashOut={setCashOut} onCalculate={handleCalculate} onResetSession={resetSession} onSaveAndFinish={saveAndFinishSession} savingSession={savingSession} saveStatus={saveStatus} />}
+          {tab === 'history' && <HistoryTab history={combinedHistory} onUpdateSession={updateSession} onDeleteSession={deleteSession} failedSyncCount={failedCloudSaves.length} failedSessionIds={failedCloudSaves.map(x => x.sessionId)} onRetryFailedSaves={retryFailedSaves} retryingFailedSaves={retryingFailedSaves} />}
+          {tab === 'profile' && <ProfileView user={user} history={combinedHistory} players={players} pendingInvites={pendingInvites} outgoingInvites={outgoingInvites} onAcceptInvite={acceptInvite} onRejectInvite={rejectInvite} onCancelInvite={cancelInvite} onUnlinkPlayer={unlinkPlayer} onSignOut={handleSignOut} onRefresh={handleManualRefresh} onRenameSelf={syncSelfPlayerName} refreshBusy={manualRefreshBusy} syncMeta={syncMeta} onRetrySyncFailed={retryFailedSaves} retryingFailedSaves={retryingFailedSaves} failedCloudSavesCount={failedCloudSaves.length} />}
+        </main>
+
+        <nav className="nav-safe fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-lg bg-green-950/90 backdrop-blur-sm border-t border-green-900 flex z-10" role="navigation" aria-label="Główne zakładki">
+          {TABS.map(({ key, label, Icon, aria }) => {
+            const isDisabled = key === 'settlement' && sessionPlayers.length === 0;
+            const showFailedSyncBadge = key === 'history' && failedCloudSaves.length > 0;
+            const active = tab === key;
+            return (
+              <button key={key} type="button"
+                aria-current={active ? 'page' : undefined}
+                aria-label={aria}
+                aria-disabled={isDisabled ? true : undefined}
+                onClick={() => { if (isDisabled) { setTab('session'); return; } setTab(key); }}
+                title={isDisabled ? 'Najpierw dodaj graczy do sesji' : label}
+                className={`flex-1 flex flex-col items-center py-2.5 gap-0.5 text-xs font-medium transition-colors border-t-2
+                  ${active ? 'text-rose-400 border-rose-500' : 'border-transparent'}
+                  ${isDisabled ? 'text-green-900 cursor-not-allowed' : !active ? 'text-green-800 hover:text-green-400' : ''}`}>
+                <span className={`relative ${isDisabled ? 'opacity-30' : ''}`} aria-hidden="true">
+                  <Icon />
+                  {showFailedSyncBadge && (
+                    <span className="absolute -top-1.5 -right-2 min-w-[16px] h-4 px-1 rounded-full bg-yellow-500 text-[10px] leading-4 text-black font-bold">
+                      {failedCloudSaves.length}
+                    </span>
+                  )}
+                </span>
+                <span className={`${isDisabled ? 'opacity-30' : ''} leading-tight`}>{label}</span>
+              </button>
+            );
+          })}
+        </nav>
+      </div>
+    </div>
+  );
+}
