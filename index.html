@@ -1078,19 +1078,13 @@ const MEDALS = ['🥇', '🥈', '🥉'];
 const PERIODS = [
   { label: '5 gier', value: 5 },
   { label: '10 gier', value: 10 },
-  { label: '20 gier', value: 20 },
+  { label: '15 gier', value: 15 },
   { label: 'All time', value: null },
 ];
 
 function HistoryTab({ history, onUpdateSession, onDeleteSession, failedSyncCount, failedSessionIds, onRetryFailedSaves, retryingFailedSaves }) {
-  const [view, setView] = useState('archive');
   const [period, setPeriod] = useState(null);
-  const [filterPlayer, setFilterPlayer] = useState('');
-  const [filterFrom, setFilterFrom] = useState('');
-  const [filterTo, setFilterTo] = useState('');
-  const [filterMinPot, setFilterMinPot] = useState('');
-  const [filterMaxPot, setFilterMaxPot] = useState('');
-  const [filterText, setFilterText] = useState('');
+  const [selectedStatPlayerId, setSelectedStatPlayerId] = useState('');
   const [expandedId, setExpandedId] = useState(null);
   const [editingIds, setEditingIds] = useState({});
   const [sessionDrafts, setSessionDrafts] = useState({});
@@ -1104,40 +1098,19 @@ function HistoryTab({ history, onUpdateSession, onDeleteSession, failedSyncCount
   const filteredHistory = period === null ? ownedHistoryForStats : ownedHistoryForStats.slice(-period);
   const stats = calculateAllTimeStats(filteredHistory);
   const sorted = [...history].reverse();
-  const filterPlayerOptions = React.useMemo(() => {
-    const map = new Map();
-    for (const session of history) {
-      for (const p of (session.players || [])) {
-        if (!map.has(p.id)) map.set(p.id, p.name);
-      }
-    }
-    return [...map.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name, 'pl'));
-  }, [history]);
-  const filteredSorted = React.useMemo(() => {
-    const fromMs = filterFrom ? new Date(`${filterFrom}T00:00:00`).getTime() : null;
-    const toMs = filterTo ? new Date(`${filterTo}T23:59:59`).getTime() : null;
-    const minPot = filterMinPot !== '' ? parseFloat(filterMinPot) : null;
-    const maxPot = filterMaxPot !== '' ? parseFloat(filterMaxPot) : null;
-    const text = (filterText || '').trim().toLowerCase();
-    return sorted.filter(session => {
-      const t = new Date(session.date).getTime();
-      if (fromMs && t < fromMs) return false;
-      if (toMs && t > toMs) return false;
-      if (minPot != null && session.totalPot < minPot) return false;
-      if (maxPot != null && session.totalPot > maxPot) return false;
-      if (filterPlayer && !(session.players || []).some(p => p.id === filterPlayer)) return false;
-      if (text) {
-        const hay = [
-          formatDate(session.date),
-          ...((session.players || []).map(p => p.name)),
-          ...((session.transfers || []).flatMap(t => [t.from, t.to]))
-        ].join(' ').toLowerCase();
-        if (!hay.includes(text)) return false;
-      }
-      return true;
-    });
-  }, [sorted, filterFrom, filterTo, filterMinPot, filterMaxPot, filterPlayer, filterText]);
-  const archiveSlice = filteredSorted.slice(0, archiveLimit);
+  const drilldownSessions = React.useMemo(() => {
+    if (!selectedStatPlayerId) return sorted;
+    return sorted.filter(session => (session.players || []).some(p => p.id === selectedStatPlayerId));
+  }, [sorted, selectedStatPlayerId]);
+  const selectedStatPlayer = React.useMemo(
+    () => stats.find(s => s.id === selectedStatPlayerId) || null,
+    [stats, selectedStatPlayerId]
+  );
+  useEffect(() => {
+    if (!selectedStatPlayerId) return;
+    if (!stats.some(s => s.id === selectedStatPlayerId)) setSelectedStatPlayerId('');
+  }, [stats, selectedStatPlayerId]);
+  const archiveSlice = drilldownSessions.slice(0, archiveLimit);
   const failedSessionIdSet = React.useMemo(() => new Set(failedSessionIds), [failedSessionIds]);
 
   const enterEdit = session => {
@@ -1203,63 +1176,37 @@ function HistoryTab({ history, onUpdateSession, onDeleteSession, failedSyncCount
       )}
       <div>
         <h2 className="text-lg font-bold text-white tracking-tight">Historia</h2>
-        <p className="text-xs text-green-200/55 mt-0.5">{history.length} {pluralPL(history.length, 'sesja', 'sesje', 'sesji')} w archiwum · ranking z pełnych sesji u Ciebie</p>
+        <p className="text-xs text-green-200/55 mt-0.5">{history.length} {pluralPL(history.length, 'sesja', 'sesje', 'sesji')} w archiwum · podsumowanie All time i drilldown</p>
       </div>
 
-      <div className="flex bg-black/30 border border-green-900 rounded-xl p-1 gap-1">
-        <button disabled
-          className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-sm font-medium bg-rose-800 text-white">
-          <IconClock /> Archiwum
-        </button>
+      <div className="flex gap-1.5 flex-wrap">
+        {PERIODS.map(({ label, value }) => {
+          const active = period === value;
+          const available = value === null || ownedHistoryForStats.length >= value;
+          return (
+            <button key={label} onClick={() => { setPeriod(value); setArchiveLimit(25); }} disabled={!available}
+              className={`px-3 py-1 rounded-full text-xs font-medium transition-colors border ${active ? 'bg-rose-800 border-rose-800 text-white' : available ? 'bg-black/30 border-green-800 text-green-200/70 hover:border-green-600 hover:text-green-200' : 'bg-black/10 border-green-900/40 text-green-200/20 cursor-not-allowed'}`}>
+              {label}
+            </button>
+          );
+        })}
       </div>
+      <p className="text-xs text-green-200/60 uppercase tracking-wider px-1">
+        {period === null ? 'All time' : `Ostatnie ${Math.min(period, ownedHistoryForStats.length)} ${pluralPL(Math.min(period, ownedHistoryForStats.length), 'gra', 'gry', 'gier')}`}
+      </p>
 
-      <div className="bg-black/20 border border-green-900/70 rounded-2xl p-3 space-y-2">
-        <p className="text-xs text-green-200/60 uppercase tracking-wider">Filtry historii</p>
-        <div className="grid grid-cols-2 gap-2">
-          <input type="date" value={filterFrom} onChange={e => setFilterFrom(e.target.value)}
-            className="bg-black/40 border border-green-800 rounded-lg px-2.5 py-2 text-xs text-white focus:outline-none focus:border-rose-600" />
-          <input type="date" value={filterTo} onChange={e => setFilterTo(e.target.value)}
-            className="bg-black/40 border border-green-800 rounded-lg px-2.5 py-2 text-xs text-white focus:outline-none focus:border-rose-600" />
-          <input type="number" min="0" placeholder="Pula od (PLN)" value={filterMinPot} onChange={e => setFilterMinPot(e.target.value)}
-            className="bg-black/40 border border-green-800 rounded-lg px-2.5 py-2 text-xs text-white focus:outline-none focus:border-rose-600" />
-          <input type="number" min="0" placeholder="Pula do (PLN)" value={filterMaxPot} onChange={e => setFilterMaxPot(e.target.value)}
-            className="bg-black/40 border border-green-800 rounded-lg px-2.5 py-2 text-xs text-white focus:outline-none focus:border-rose-600" />
-        </div>
-        <div className="grid grid-cols-1 gap-2">
-          <select value={filterPlayer} onChange={e => setFilterPlayer(e.target.value)}
-            className="bg-black/40 border border-green-800 rounded-lg px-2.5 py-2 text-xs text-white focus:outline-none focus:border-rose-600">
-            <option value="">Wszyscy gracze</option>
-            {filterPlayerOptions.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
-          <input type="text" placeholder="Szukaj po nazwie / przelewie / dacie" value={filterText} onChange={e => setFilterText(e.target.value)}
-            className="bg-black/40 border border-green-800 rounded-lg px-2.5 py-2 text-xs text-white placeholder-green-700 focus:outline-none focus:border-rose-600" />
-        </div>
-      </div>
-
-      {view === 'leaderboard' && (
-        <div className="space-y-2">
-          <div className="flex gap-1.5 flex-wrap">
-            {PERIODS.map(({ label, value }) => {
-              const active = period === value;
-              const available = value === null || ownedHistoryForStats.length >= value;
-              return (
-                <button key={label} onClick={() => setPeriod(value)} disabled={!available}
-                  className={`px-3 py-1 rounded-full text-xs font-medium transition-colors border ${active ? 'bg-rose-800 border-rose-800 text-white' : available ? 'bg-black/30 border-green-800 text-green-200/70 hover:border-green-600 hover:text-green-200' : 'bg-black/10 border-green-900/40 text-green-200/20 cursor-not-allowed'}`}>
-                  {label}
-                </button>
-              );
-            })}
+      <div className="space-y-2">
+        <p className="text-xs text-green-200/60 uppercase tracking-wider px-1">Bilans graczy</p>
+        {stats.length === 0 ? (
+          <div className="text-center py-12 bg-black/20 rounded-2xl border border-dashed border-green-900">
+            <p className="text-green-200/50 text-sm">Brak danych.</p>
+            <p className="text-green-200/30 text-xs mt-1">Zagraj i zapisz pierwszą sesję.</p>
           </div>
-          <p className="text-xs text-green-200/60 uppercase tracking-wider px-1">
-            {period === null ? 'Podsumowanie Wszech Czasów' : `Ostatnie ${Math.min(period, ownedHistoryForStats.length)} ${pluralPL(Math.min(period, ownedHistoryForStats.length), 'gra', 'gry', 'gier')}`}
-          </p>
-          {stats.length === 0 ? (
-            <div className="text-center py-12 bg-black/20 rounded-2xl border border-dashed border-green-900">
-              <p className="text-green-200/50 text-sm">Brak danych.</p>
-              <p className="text-green-200/30 text-xs mt-1">Zagraj i zapisz pierwszą sesję.</p>
-            </div>
-          ) : stats.map((s, idx) => (
-            <div key={s.id} className="bg-black/30 border border-green-900 rounded-2xl px-4 py-3 flex items-center gap-3">
+        ) : stats.map((s, idx) => {
+          const selected = selectedStatPlayerId === s.id;
+          return (
+            <button key={s.id} type="button" onClick={() => { setSelectedStatPlayerId(prev => prev === s.id ? '' : s.id); setArchiveLimit(25); }}
+              className={`w-full bg-black/30 border rounded-2xl px-4 py-3 flex items-center gap-3 text-left transition-colors ${selected ? 'border-rose-700 bg-rose-950/20' : 'border-green-900 hover:border-green-700'}`}>
               <div className="w-8 text-center shrink-0">
                 {idx < 3 ? <span className="text-lg">{MEDALS[idx]}</span> : <span className="text-sm text-green-200/40 font-semibold">#{idx + 1}</span>}
               </div>
@@ -1268,21 +1215,32 @@ function HistoryTab({ history, onUpdateSession, onDeleteSession, failedSyncCount
               </div>
               <div className="flex-1 min-w-0">
                 <p className="font-semibold text-white text-sm truncate">{s.name}</p>
-                <p className="text-xs text-green-200/40">{s.gamesPlayed} {pluralPL(s.gamesPlayed, 'gra', 'gry', 'gier')}</p>
+                <p className="text-xs text-green-200/40">{s.gamesPlayed} {pluralPL(s.gamesPlayed, 'gra', 'gry', 'gier')} · kliknij, aby zobaczyć sesje</p>
               </div>
               <NetBadge value={s.totalNetBalance} />
-            </div>
-          ))}
+            </button>
+          );
+        })}
+      </div>
+
+      {selectedStatPlayer && (
+        <div className="bg-rose-950/20 border border-rose-900/70 rounded-2xl p-3 flex items-center justify-between gap-3">
+          <p className="text-xs text-rose-200/90">
+            Drilldown: <span className="font-semibold text-white">{selectedStatPlayer.name}</span> · {drilldownSessions.length} {pluralPL(drilldownSessions.length, 'sesja', 'sesje', 'sesji')} · wynik {selectedStatPlayer.totalNetBalance >= 0 ? '+' : '−'}{formatPln(Math.abs(selectedStatPlayer.totalNetBalance))} PLN
+          </p>
+          <button type="button" onClick={() => setSelectedStatPlayerId('')}
+            className="text-xs border border-rose-800 rounded-lg px-2.5 py-1.5 text-rose-100/90 hover:bg-rose-900/30 transition-colors">
+            Wyczyść
+          </button>
         </div>
       )}
 
-      {view === 'archive' && (
-        <div className="space-y-2">
+      <div className="space-y-2">
           <p className="text-xs text-green-200/60 uppercase tracking-wider px-1">Zapisane sesje</p>
-          {sorted.length === 0 ? (
+          {drilldownSessions.length === 0 ? (
             <div className="text-center py-12 bg-black/20 rounded-2xl border border-dashed border-green-900">
-              <p className="text-green-200/50 text-sm">Brak sesji.</p>
-              <p className="text-green-200/30 text-xs mt-1">Zakończ i zapisz pierwszą grę.</p>
+              <p className="text-green-200/50 text-sm">{selectedStatPlayer ? 'Brak sesji w drilldown.' : 'Brak sesji.'}</p>
+              <p className="text-green-200/30 text-xs mt-1">{selectedStatPlayer ? 'Ten gracz nie ma sesji w wybranym zakresie.' : 'Zakończ i zapisz pierwszą grę.'}</p>
             </div>
           ) : (
             <>
@@ -1445,16 +1403,15 @@ function HistoryTab({ history, onUpdateSession, onDeleteSession, failedSyncCount
               </div>
             );
           })}
-          {sorted.length > archiveLimit && (
+          {drilldownSessions.length > archiveLimit && (
             <button type="button" onClick={() => setArchiveLimit(l => l + 25)}
               className="w-full py-3 text-sm font-medium text-green-200/70 border border-green-900 rounded-2xl hover:bg-black/30 transition-colors">
-              Pokaż więcej ({sorted.length - archiveLimit} pozostało)
+              Pokaż więcej ({drilldownSessions.length - archiveLimit} pozostało)
             </button>
           )}
             </>
           )}
         </div>
-      )}
     </div>
   );
 }
@@ -1590,21 +1547,6 @@ function ProfileView({ user, history, players, pendingInvites, onAcceptInvite, o
     () => myGames.reduce((sum, g) => sum + (g.net_balance || 0), 0) / 100,
     [myGames]
   );
-
-  const stats = React.useMemo(() => {
-    const map = {};
-    for (const session of history) {
-      for (const p of session.players) {
-        if (!map[p.name]) map[p.name] = { name: p.name, games: 0, total: 0, wins: 0, best: -Infinity, worst: Infinity };
-        map[p.name].games++;
-        map[p.name].total += p.netBalance;
-        if (p.netBalance > 0) map[p.name].wins++;
-        if (p.netBalance > map[p.name].best) map[p.name].best = p.netBalance;
-        if (p.netBalance < map[p.name].worst) map[p.name].worst = p.netBalance;
-      }
-    }
-    return Object.values(map).sort((a, b) => b.total - a.total);
-  }, [history]);
 
   const displayName = profile?.display_name || user.email?.split('@')[0] || 'Gracz';
   const friends = React.useMemo(() => players.filter(p => p.linked_user_id && p.linked_user_id !== user.id), [players, user.id]);
@@ -1841,33 +1783,6 @@ function ProfileView({ user, history, players, pendingInvites, onAcceptInvite, o
               >
                 {unlinkingId === friend.id ? '...' : 'Odepnij'}
               </button>
-            </div>
-          );
-        })}
-      </div>
-
-      <div>
-        <h2 className="text-sm font-semibold uppercase tracking-wider text-green-200/60 mb-3">Statystyki graczy ({history.length} sesji)</h2>
-        {stats.length === 0 ? (
-          <div className="text-center py-12 bg-black/20 rounded-2xl border border-dashed border-green-900">
-            <p className="text-green-200/50 text-sm">Brak danych.</p>
-            <p className="text-green-200/30 text-xs mt-1">Zagraj i zapisz pierwszą sesję.</p>
-          </div>
-        ) : stats.map((s, idx) => {
-          const winRate = s.games > 0 ? Math.round((s.wins / s.games) * 100) : 0;
-          return (
-            <div key={s.name} className="bg-black/30 border border-green-900 rounded-2xl px-4 py-3 flex items-center gap-3 mb-2">
-              <div className="w-8 text-center shrink-0">
-                {idx < 3 ? <span className="text-lg">{['🥇','🥈','🥉'][idx]}</span> : <span className="text-sm text-green-200/40 font-semibold">#{idx+1}</span>}
-              </div>
-              <div className="w-9 h-9 rounded-full bg-green-900/70 text-green-200 flex items-center justify-center text-sm font-bold shrink-0">
-                {s.name[0]?.toUpperCase()}
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="font-semibold text-white text-sm truncate">{s.name}</p>
-                <p className="text-xs text-green-200/40">{s.games} gier · {winRate}% wygranych</p>
-              </div>
-              <NetBadge value={s.total} />
             </div>
           );
         })}
@@ -2643,7 +2558,7 @@ function App() {
       setManualRefreshBusy(false);
     }
   };
-  const renameSelfEverywhere = async nextName => {
+  const syncSelfPlayerName = async nextName => {
     if (!user || !nextName) return;
     const myEmail = normalizeEmail(user.email);
     const selfIds = players
@@ -2651,25 +2566,8 @@ function App() {
       .map(p => p.id);
     if (selfIds.length === 0) return;
     setPlayers(prev => prev.map(p => selfIds.includes(p.id) ? { ...p, name: nextName } : p));
-    setHistory(prev => prev.map(session => ({
-      ...session,
-      players: (session.players || []).map(sp => selfIds.includes(sp.id) ? { ...sp, name: nextName } : sp),
-      transfers: (session.transfers || []).map(t => ({
-        ...t,
-        from: selfIds.some(id => (session.players || []).find(p => p.id === id && p.name === t.from)) ? nextName : t.from,
-        to: selfIds.some(id => (session.players || []).find(p => p.id === id && p.name === t.to)) ? nextName : t.to,
-      })),
-    })));
     const { error: playersErr } = await supabase.from('players').update({ name: nextName }).eq('owner_id', user.id).eq('linked_user_id', user.id);
     if (playersErr) notifyCloudFailure(playersErr.message);
-    if (selfIds.length > 0) {
-      const { data: mySessions } = await supabase.from('sessions').select('id').eq('owner_id', user.id);
-      const sessionIds = (mySessions || []).map(s => s.id);
-      if (sessionIds.length > 0) {
-        await supabase.from('session_players').update({ player_name: nextName }).in('session_id', sessionIds).in('player_id', selfIds);
-      }
-      await supabase.from('participations').update({ player_name: nextName }).eq('user_id', user.id);
-    }
   };
 
   if (authLoading) return <LoadingScreen />;
@@ -2727,7 +2625,7 @@ function App() {
           {tab === 'session' && <SessionTab players={players} sessionPlayers={sessionPlayers} defaultBuyIn={defaultBuyIn} totalPot={totalPot} autoAddMeToSession={autoAddMeToSession} onToggleAutoAddMe={setAutoAddMeToSession} onDefaultBuyInChange={setDefaultBuyIn} onAddBuyIn={addBuyIn} onRemoveBuyIn={removeBuyIn} onRemoveFromSession={removeFromSession} onAddToSession={addToSession} onGoToSettlement={() => setTab('settlement')} />}
           {tab === 'settlement' && <SettlementTab players={players} sessionPlayers={sessionPlayers} transactions={transactions} settled={settled} totalPot={totalPot} onSetCashOut={setCashOut} onCalculate={handleCalculate} onResetSession={resetSession} onSaveAndFinish={saveAndFinishSession} savingSession={savingSession} saveStatus={saveStatus} />}
           {tab === 'history' && <HistoryTab history={combinedHistory} onUpdateSession={updateSession} onDeleteSession={deleteSession} failedSyncCount={failedCloudSaves.length} failedSessionIds={failedCloudSaves.map(x => x.sessionId)} onRetryFailedSaves={retryFailedSaves} retryingFailedSaves={retryingFailedSaves} />}
-          {tab === 'profile' && <ProfileView user={user} history={combinedHistory} players={players} pendingInvites={pendingInvites} onAcceptInvite={acceptInvite} onRejectInvite={rejectInvite} onUnlinkPlayer={unlinkPlayer} onSignOut={handleSignOut} onRefresh={handleManualRefresh} onRenameSelf={renameSelfEverywhere} refreshBusy={manualRefreshBusy} syncMeta={syncMeta} onRetrySyncFailed={retryFailedSaves} retryingFailedSaves={retryingFailedSaves} failedCloudSavesCount={failedCloudSaves.length} />}
+          {tab === 'profile' && <ProfileView user={user} history={combinedHistory} players={players} pendingInvites={pendingInvites} onAcceptInvite={acceptInvite} onRejectInvite={rejectInvite} onUnlinkPlayer={unlinkPlayer} onSignOut={handleSignOut} onRefresh={handleManualRefresh} onRenameSelf={syncSelfPlayerName} refreshBusy={manualRefreshBusy} syncMeta={syncMeta} onRetrySyncFailed={retryFailedSaves} retryingFailedSaves={retryingFailedSaves} failedCloudSavesCount={failedCloudSaves.length} />}
         </main>
 
         <nav className="nav-safe fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-lg bg-green-950/90 backdrop-blur-sm border-t border-green-900 flex z-10" role="navigation" aria-label="Główne zakładki">
