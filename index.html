@@ -1405,8 +1405,8 @@ function ProfileView({ user, history, players, pendingInvites, onAcceptInvite, o
     supabase.from('participations').select('*').eq('user_id', user.id).order('session_date', { ascending: false }).then(({ data }) => {
       if (data) setMyGames(data);
     });
-    // Auto-save email to profile (works once SQL migration is run)
-    supabase.from('profiles').upsert({ id: user.id, email: user.email });
+    // Keep profile email aligned, but do not create partial rows.
+    supabase.from('profiles').update({ email: (user.email || '').trim().toLowerCase() }).eq('id', user.id);
   }, [user.id]);
 
   useEffect(() => {
@@ -1424,17 +1424,40 @@ function ProfileView({ user, history, players, pendingInvites, onAcceptInvite, o
     return () => document.removeEventListener('visibilitychange', onVis);
   }, [user.id, user.email]);
 
+  const buildProfilePayload = (patch = {}) => {
+    const safeName = (patch.display_name ?? draftName ?? profile?.display_name ?? user.email?.split('@')[0] ?? 'Gracz').trim() || 'Gracz';
+    const safeEmailRaw = (patch.email ?? draftEmail ?? profile?.email ?? user.email ?? '').trim().toLowerCase();
+    const safePhoneRaw = patch.phone !== undefined
+      ? patch.phone
+      : (draftPhone ? draftPhone.replace(/\s/g, '') : (profile?.phone ?? null));
+    const safePhone = safePhoneRaw ? String(safePhoneRaw).replace(/\s/g, '') : null;
+    return {
+      id: user.id,
+      display_name: safeName,
+      email: safeEmailRaw || null,
+      phone: safePhone,
+    };
+  };
+
+  const persistProfilePatch = async (patch = {}) => {
+    const payload = buildProfilePayload(patch);
+    const { error: updateErr } = await supabase.from('profiles').update(payload).eq('id', user.id);
+    if (!updateErr) return { error: null, payload };
+    const { error: upsertErr } = await supabase.from('profiles').upsert(payload);
+    return { error: upsertErr, payload };
+  };
+
   const saveDisplayName = async () => {
     if (!draftName.trim()) return;
     setSavingName(true);
     setNameSaveError('');
-    const { error } = await supabase.from('profiles').upsert({ id: user.id, display_name: draftName.trim() });
+    const nextName = draftName.trim();
+    const { error } = await persistProfilePatch({ display_name: nextName });
     setSavingName(false);
     if (error) {
       setNameSaveError('Nie udało się zapisać. Spróbuj ponownie.');
       return;
     }
-    const nextName = draftName.trim();
     await supabase.from('players').update({ name: nextName }).eq('owner_id', user.id).eq('linked_user_id', user.id);
     setProfile(prev => ({ ...prev, display_name: nextName }));
     setEditingName(false);
@@ -1445,7 +1468,7 @@ function ProfileView({ user, history, players, pendingInvites, onAcceptInvite, o
     setSavingPhone(true);
     setPhoneSaveError('');
     const digits = draftPhone.replace(/\s/g, '') || null;
-    const { error } = await supabase.from('profiles').upsert({ id: user.id, phone: digits });
+    const { error } = await persistProfilePatch({ phone: digits });
     setSavingPhone(false);
     if (error) {
       const hint = (error.message || '').replace(/\s+/g, ' ').trim();
@@ -1465,7 +1488,7 @@ function ProfileView({ user, history, players, pendingInvites, onAcceptInvite, o
     }
     setSavingEmail(true);
     setEmailSaveError('');
-    const { error } = await supabase.from('profiles').upsert({ id: user.id, email: emailNorm });
+    const { error } = await persistProfilePatch({ email: emailNorm });
     setSavingEmail(false);
     if (error) {
       setEmailSaveError('Nie udało się zapisać emaila. Spróbuj ponownie.');
