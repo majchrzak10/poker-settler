@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+**Handoff / kontekst decyzyjny (diagnoza sync, migracje, pułapki):** zacznij od [`docs/CONTEXT.md`](docs/CONTEXT.md).
+
 ## Overview
 
 **Poker Settler** — single-page Polish-language PWA for settling poker debts among friends. Main UI is `index.html`; shared settlement helpers live in `lib/settlement.js` (also covered by `npm test`).
