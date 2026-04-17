@@ -558,15 +558,12 @@ function AuthScreen() {
 
 // ─── PlayersTab ───────────────────────────────────────────────────────────────
 
-function PlayersTab({ players, sessionPlayers, onAddPlayer, onUpdatePlayer, onRemovePlayer, onAddToSession, onLinkPlayer, onUnlinkPlayer }) {
+function PlayersTab({ players, sessionPlayers, onAddPlayer, onUpdatePlayer, onRemovePlayer, onAddToSession, onUnlinkPlayer, currentUserId }) {
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [editingId, setEditingId] = useState(null);
   const [draft, setDraft] = useState({ name: '', phone: '', email: '' });
-  const [linkingId, setLinkingId] = useState(null);
-  const [linkEmail, setLinkEmail] = useState('');
-  const [linkMsg, setLinkMsg] = useState('');
 
   const phoneValid = phone.length === 11;
   const phoneError = phone.length > 0 && phone.length < 11;
@@ -670,19 +667,23 @@ function PlayersTab({ players, sessionPlayers, onAddPlayer, onUpdatePlayer, onRe
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="font-medium text-white text-sm">{p.name}</p>
-                      <p className="text-xs text-green-300/60">{p.linked_user_id ? '🔗 Konto połączone' : p.phone || 'Brak numeru'}</p>
-                      {!p.linked_user_id && p.email && <p className="text-[11px] text-green-300/45 truncate">{p.email}</p>}
+                      <p className="text-xs text-green-300/60">{p.phone || 'Brak numeru'}</p>
+                      {p.email && <p className="text-[11px] text-green-300/45 truncate">{p.email}</p>}
                     </div>
                     <button onClick={() => onAddToSession(p.id)} disabled={inSession}
                       className={`shrink-0 flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border transition-colors ${inSession ? 'bg-emerald-900/30 text-emerald-400 border-emerald-800 cursor-default' : 'bg-black/30 text-green-200 border-green-800 hover:bg-green-900/50'}`}>
                       {inSession ? <IconCheck /> : <IconPlus />}
                       {inSession ? 'W sesji' : 'Sesja'}
                     </button>
-                    <button onClick={() => { setLinkingId(linkingId === p.id ? null : p.id); setLinkEmail(''); setLinkMsg(''); }}
-                      className={`shrink-0 transition-colors p-1 text-lg leading-none ${p.linked_user_id ? 'text-emerald-500 hover:text-rose-400' : 'text-green-800 hover:text-green-400'}`}
-                      title={p.linked_user_id ? 'Odepnij konto' : 'Połącz z kontem'}>
-                      🔗
-                    </button>
+                    {p.linked_user_id && p.linked_user_id !== currentUserId && (
+                      <button
+                        onClick={async () => { await onUnlinkPlayer(p.id); }}
+                        className="shrink-0 transition-colors p-1 text-lg leading-none text-emerald-500 hover:text-rose-400"
+                        title="Odepnij konto"
+                      >
+                        🔗
+                      </button>
+                    )}
                     <button onClick={() => enterEdit(p)} className="shrink-0 text-green-700 hover:text-green-300 transition-colors p-1">
                       <IconPencil />
                     </button>
@@ -690,38 +691,6 @@ function PlayersTab({ players, sessionPlayers, onAddPlayer, onUpdatePlayer, onRe
                       <IconTrash />
                     </button>
                   </div>
-                  {linkingId === p.id && (
-                    <div className="pt-1 space-y-2">
-                      {p.linked_user_id ? (
-                        <div className="flex gap-2">
-                          <p className="flex-1 text-xs text-emerald-300/70 py-2">Gracz ma połączone konto. Chcesz je odpiąć?</p>
-                          <button onClick={async () => { await onUnlinkPlayer(p.id); setLinkingId(null); }}
-                            className="text-xs bg-rose-900/50 hover:bg-rose-800 border border-rose-800 text-rose-300 rounded-xl px-3 py-2 transition-colors">
-                            Odepnij
-                          </button>
-                        </div>
-                      ) : (
-                        <>
-                          <p className="text-[11px] text-green-200/45 leading-snug">
-                            Najprościej: wpisz email znajomego (jak do logowania) albo jego numer telefonu z Profilu (9 cyfr). Obie osoby muszą mieć konto.
-                          </p>
-                          <div className="flex gap-2">
-                            <input value={linkEmail} onChange={e => { setLinkEmail(e.target.value); setLinkMsg(''); }}
-                              placeholder="Email lub telefon (9 cyfr)" type="text" autoComplete="off"
-                              className="flex-1 bg-black/40 rounded-xl px-3 py-2 text-sm text-white placeholder-green-700 border border-green-800 focus:outline-none focus:border-emerald-600 transition-colors" />
-                            <button onClick={async () => {
-                              const err = await onLinkPlayer(p.id, linkEmail);
-                              if (err) { setLinkMsg(err); } else { setLinkMsg('✓ Połączono!'); setTimeout(() => setLinkingId(null), 1200); }
-                            }} disabled={linkEmail.trim().length < 3}
-                              className="text-xs bg-emerald-800 hover:bg-emerald-700 disabled:opacity-40 rounded-xl px-3 py-2 font-semibold transition-colors">
-                              Połącz
-                            </button>
-                          </div>
-                          {linkMsg && <p className={`text-xs px-1 ${linkMsg.startsWith('✓') ? 'text-emerald-400' : 'text-rose-400'}`}>{linkMsg}</p>}
-                        </>
-                      )}
-                    </div>
-                  )}
                 </div>
               )}
             </div>
@@ -1406,11 +1375,8 @@ function HistoryTab({ history, onUpdateSession, onDeleteSession, failedSyncCount
 
 // ─── ProfileView ──────────────────────────────────────────────────────────────
 
-function ProfileView({ user, history, players, pendingInvites, onAcceptInvite, onRejectInvite, onUnlinkPlayer, onSignOut, syncMeta, onRetrySyncFailed, retryingFailedSaves, failedCloudSavesCount }) {
+function ProfileView({ user, history, players, pendingInvites, onAcceptInvite, onRejectInvite, onUnlinkPlayer, onSignOut, onRefresh, refreshBusy, syncMeta, onRetrySyncFailed, retryingFailedSaves, failedCloudSavesCount }) {
   const [profile, setProfile] = useState(null);
-  const [migrateLoading, setMigrateLoading] = useState(false);
-  const [migrateError, setMigrateError] = useState('');
-  const [migrateDone, setMigrateDone] = useState(false);
   const [editingName, setEditingName] = useState(false);
   const [draftName, setDraftName] = useState('');
   const [savingName, setSavingName] = useState(false);
@@ -1422,16 +1388,19 @@ function ProfileView({ user, history, players, pendingInvites, onAcceptInvite, o
   const [draftPhone, setDraftPhone] = useState('');
   const [savingPhone, setSavingPhone] = useState(false);
   const [phoneSaveError, setPhoneSaveError] = useState('');
+  const [editingEmail, setEditingEmail] = useState(false);
+  const [draftEmail, setDraftEmail] = useState('');
+  const [savingEmail, setSavingEmail] = useState(false);
+  const [emailSaveError, setEmailSaveError] = useState('');
   const [inviteBusyId, setInviteBusyId] = useState(null);
   const [inviteMsg, setInviteMsg] = useState('');
-
-  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     supabase.from('profiles').select('*').eq('id', user.id).single().then(({ data }) => {
       setProfile(data);
       setDraftName(data?.display_name || user.email?.split('@')[0] || '');
       setDraftPhone(data?.phone ? formatPhone(data.phone) : '');
+      setDraftEmail(data?.email || user.email || '');
     });
     supabase.from('participations').select('*').eq('user_id', user.id).order('session_date', { ascending: false }).then(({ data }) => {
       if (data) setMyGames(data);
@@ -1448,6 +1417,7 @@ function ProfileView({ user, history, players, pendingInvites, onAcceptInvite, o
         setProfile(data);
         setDraftName(data.display_name || user.email?.split('@')[0] || '');
         setDraftPhone(data.phone ? formatPhone(data.phone) : '');
+        setDraftEmail(data?.email || user.email || '');
       });
     };
     document.addEventListener('visibilitychange', onVis);
@@ -1464,8 +1434,11 @@ function ProfileView({ user, history, players, pendingInvites, onAcceptInvite, o
       setNameSaveError('Nie udało się zapisać. Spróbuj ponownie.');
       return;
     }
-    setProfile(prev => ({ ...prev, display_name: draftName.trim() }));
+    const nextName = draftName.trim();
+    await supabase.from('players').update({ name: nextName }).eq('owner_id', user.id).eq('linked_user_id', user.id);
+    setProfile(prev => ({ ...prev, display_name: nextName }));
     setEditingName(false);
+    if (onRefresh) await onRefresh();
   };
 
   const savePhone = async () => {
@@ -1479,8 +1452,29 @@ function ProfileView({ user, history, players, pendingInvites, onAcceptInvite, o
       setPhoneSaveError(hint ? hint.slice(0, 200) : 'Nie udało się zapisać numeru. Spróbuj ponownie.');
       return;
     }
+    await supabase.from('players').update({ phone: digits }).eq('owner_id', user.id).eq('linked_user_id', user.id);
     setProfile(prev => ({ ...prev, phone: digits }));
     setEditingPhone(false);
+    if (onRefresh) await onRefresh();
+  };
+  const saveEmail = async () => {
+    const emailNorm = draftEmail.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailNorm)) {
+      setEmailSaveError('Podaj poprawny email.');
+      return;
+    }
+    setSavingEmail(true);
+    setEmailSaveError('');
+    const { error } = await supabase.from('profiles').upsert({ id: user.id, email: emailNorm });
+    setSavingEmail(false);
+    if (error) {
+      setEmailSaveError('Nie udało się zapisać emaila. Spróbuj ponownie.');
+      return;
+    }
+    await supabase.from('players').update({ email: emailNorm }).eq('owner_id', user.id).eq('linked_user_id', user.id);
+    setProfile(prev => ({ ...prev, email: emailNorm }));
+    setEditingEmail(false);
+    if (onRefresh) await onRefresh();
   };
 
   const totalMyGamesBalance = React.useMemo(
@@ -1504,8 +1498,7 @@ function ProfileView({ user, history, players, pendingInvites, onAcceptInvite, o
   }, [history]);
 
   const displayName = profile?.display_name || user.email?.split('@')[0] || 'Gracz';
-  const localHasData = loadLS('poker_players', []).length > 0 || loadLS('poker_sessions_history', []).length > 0;
-  const friends = React.useMemo(() => players.filter(p => p.linked_user_id), [players]);
+  const friends = React.useMemo(() => players.filter(p => p.linked_user_id && p.linked_user_id !== user.id), [players, user.id]);
   const lastSharedByPlayerId = React.useMemo(() => {
     const out = {};
     for (const session of history) {
@@ -1533,72 +1526,22 @@ function ProfileView({ user, history, players, pendingInvites, onAcceptInvite, o
     });
   }, [friends]);
 
-  const handleMigrate = async () => {
-    setMigrateLoading(true);
-    setMigrateError('');
-    try {
-      const localPlayers = loadLS('poker_players', []);
-      const localHistory = loadLS('poker_sessions_history', []);
-      const idMap = {};
-      const playersPayload = localPlayers.map(p => {
-        const newId = generateId();
-        idMap[p.id] = newId;
-        return { id: newId, owner_id: user.id, name: p.name, phone: p.phone || null, email: p.email || null };
-      });
-      if (playersPayload.length > 0) {
-        const { error } = await supabase.from('players').upsert(playersPayload);
-        if (error) throw error;
-      }
-
-      const sessionsPayload = [];
-      const sessionPlayersPayload = [];
-      const transfersPayload = [];
-      for (const s of localHistory) {
-        sessionsPayload.push({ id: s.id, owner_id: user.id, played_at: s.date, total_pot: Math.round((s.totalPot || 0) * 100) });
-        for (const p of (s.players || [])) {
-          const pid = idMap[p.id];
-          if (!pid) continue;
-          sessionPlayersPayload.push({
-            session_id: s.id,
-            player_id: pid,
-            player_name: p.name,
-            total_buy_in: Math.round((p.totalBuyIn || 0) * 100),
-            cash_out: Math.round((p.cashOut || 0) * 100),
-          });
-        }
-        for (const t of (s.transfers || [])) {
-          transfersPayload.push({ session_id: s.id, from_name: t.from, to_name: t.to, amount: Math.round((t.amount || 0) * 100) });
-        }
-      }
-      if (sessionsPayload.length > 0) {
-        const { error } = await supabase.from('sessions').upsert(sessionsPayload);
-        if (error) throw error;
-      }
-      if (sessionPlayersPayload.length > 0) {
-        const { error } = await supabase.from('session_players').upsert(sessionPlayersPayload);
-        if (error) throw error;
-      }
-      if (transfersPayload.length > 0) {
-        const { error } = await supabase.from('transfers').upsert(transfersPayload);
-        if (error) throw error;
-      }
-
-      localStorage.removeItem('poker_players');
-      localStorage.removeItem('poker_sessions_history');
-      setMigrateDone(true);
-      window.location.reload();
-    } catch (e) {
-      setMigrateError(e?.message || 'Nie udało się zaimportować. Spróbuj ponownie.');
-    } finally {
-      setMigrateLoading(false);
-    }
-  };
-
   return (
     <div className="p-4 space-y-5 pb-6">
       <div className="px-1">
-        <h2 className="text-lg font-bold text-white tracking-tight">Profil</h2>
-        <p className="text-xs text-green-200/55 mt-0.5">Konto, import danych i synchronizacja</p>
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-lg font-bold text-white tracking-tight">Profil</h2>
+          <button
+            onClick={onRefresh}
+            disabled={refreshBusy}
+            title="Odśwież dane z chmury"
+            className="text-xs border border-green-800 bg-black/30 hover:bg-black/50 disabled:opacity-40 rounded-lg px-2.5 py-1.5 text-green-200/80 flex items-center gap-1.5"
+          >
+            <IconRefresh />
+            {refreshBusy ? 'Sync...' : 'Sync'}
+          </button>
+        </div>
+        <p className="text-xs text-green-200/55 mt-0.5">Konto i synchronizacja</p>
       </div>
       <div className="bg-black/30 border border-green-900 rounded-2xl p-4 space-y-3">
         <div className="flex items-center gap-4">
@@ -1614,7 +1557,30 @@ function ProfileView({ user, history, players, pendingInvites, onAcceptInvite, o
                 </button>
               )}
             </div>
-            <p className="text-xs text-green-200/50 truncate">{user.email}</p>
+            {!editingEmail ? (
+              <div className="flex items-center gap-1.5 mt-0.5">
+                <p className="text-xs text-green-200/50 truncate">{profile?.email || user.email}</p>
+                <button onClick={() => { setEditingEmail(true); setEmailSaveError(''); }}
+                  className="text-green-800 hover:text-green-400 transition-colors shrink-0">
+                  <IconPencil />
+                </button>
+              </div>
+            ) : (
+              <div className="mt-1 space-y-1">
+                <div className="flex gap-2 items-center">
+                  <input value={draftEmail} onChange={e => { setDraftEmail(e.target.value); setEmailSaveError(''); }}
+                    type="email" autoFocus placeholder="Email"
+                    className="flex-1 bg-black/40 rounded-xl px-3 py-1.5 text-sm text-white border border-green-800 focus:outline-none focus:border-rose-600 transition-colors" />
+                  <button onClick={saveEmail} disabled={savingEmail}
+                    className="shrink-0 text-xs bg-rose-800 hover:bg-rose-900 disabled:opacity-40 rounded-xl px-3 py-1.5 font-semibold transition-colors">
+                    {savingEmail ? '...' : 'Zapisz'}
+                  </button>
+                  <button onClick={() => { setEditingEmail(false); setDraftEmail(profile?.email || user.email || ''); }}
+                    className="shrink-0 text-green-200/50 hover:text-white transition-colors px-1">✕</button>
+                </div>
+                {emailSaveError && <p className="text-xs text-rose-400 px-1">{emailSaveError}</p>}
+              </div>
+            )}
             {!editingPhone ? (
               <div className="flex items-center gap-1.5 mt-0.5">
                 <p className="text-xs text-green-200/40 truncate">
@@ -1662,28 +1628,8 @@ function ProfileView({ user, history, players, pendingInvites, onAcceptInvite, o
             {nameSaveError && <p className="text-xs text-rose-400 px-1">{nameSaveError}</p>}
           </div>
         )}
-        <div className="border-t border-green-900/50 pt-3">
-          <p className="text-xs text-green-200/40 mb-1">Twój ID (podaj organizatorowi żeby Cię połączył):</p>
-          <div className="flex items-center gap-2">
-            <code className="flex-1 text-xs text-green-300/70 bg-black/30 rounded-lg px-3 py-2 font-mono truncate">{user.id}</code>
-            <button onClick={() => { navigator.clipboard?.writeText(user.id); setCopied(true); setTimeout(() => setCopied(false), 2000); }}
-              className={`shrink-0 text-xs px-3 py-2 rounded-lg border transition-colors ${copied ? 'text-emerald-400 border-emerald-800' : 'text-green-200/50 border-green-900 hover:text-white'}`}>
-              {copied ? '✓ Skopiowano' : 'Kopiuj'}
-            </button>
-          </div>
-        </div>
+        {syncMeta?.lastError && <p className="text-xs text-rose-400">{syncMeta.lastError}</p>}
       </div>
-
-      {localHasData && !migrateDone && (
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-yellow-800/40 bg-yellow-900/15 px-3 py-2.5">
-          <p className="text-xs text-yellow-200/85 flex-1 min-w-[12rem]">Lokalna lista graczy / historia — możesz je zaimportować do konta.</p>
-          <button onClick={handleMigrate} disabled={migrateLoading}
-            className="shrink-0 text-xs bg-yellow-700 hover:bg-yellow-800 disabled:opacity-50 rounded-lg px-3 py-1.5 font-semibold transition-colors">
-            {migrateLoading ? '…' : 'Importuj'}
-          </button>
-          {migrateError && <p className="w-full text-xs text-rose-400">{migrateError}</p>}
-        </div>
-      )}
 
       {(syncMeta?.lastError || failedCloudSavesCount > 0) && (
         <div className="bg-amber-950/35 border border-amber-800/45 rounded-2xl p-4 space-y-2">
@@ -1760,6 +1706,7 @@ function ProfileView({ user, history, players, pendingInvites, onAcceptInvite, o
           const profileLabel = profileInfo?.display_name
             ? `${profileInfo.display_name}${profileInfo.email ? ' · ' + profileInfo.email : ''}`
             : (profileInfo?.email || friend.linked_user_id);
+          const friendPhone = profileInfo?.phone || friend.phone;
           return (
             <div key={friend.id} className="bg-black/30 border border-green-900 rounded-2xl px-4 py-3 flex items-center gap-3 mb-2">
               <div className="w-9 h-9 rounded-full bg-green-900/70 text-green-200 flex items-center justify-center text-sm font-bold shrink-0">
@@ -1768,6 +1715,7 @@ function ProfileView({ user, history, players, pendingInvites, onAcceptInvite, o
               <div className="flex-1 min-w-0">
                 <p className="font-semibold text-white text-sm truncate">{friend.name}</p>
                 <p className="text-xs text-green-200/50 truncate">{profileLabel}</p>
+                {friendPhone && <p className="text-xs text-green-200/40 truncate">tel: {formatPhone(friendPhone)}</p>}
                 <p className={`text-xs mt-0.5 ${profileExists ? 'text-emerald-400/80' : 'text-yellow-300/80'}`}>
                   {profileExists ? 'Połączenie aktywne' : 'Nie udało się potwierdzić konta'}
                   {lastDate ? ` · Ostatnia wspólna gra: ${new Date(lastDate).toLocaleDateString('pl-PL')}` : ' · Brak wspólnych gier'}
@@ -1885,6 +1833,7 @@ function App() {
   const [pendingInvites, setPendingInvites] = useState([]);
   const [savingSession, setSavingSession] = useState(false);
   const [saveStatus, setSaveStatus] = useState(null);
+  const [manualRefreshBusy, setManualRefreshBusy] = useState(false);
   const [failedCloudSaves, setFailedCloudSaves] = useState(() => loadLS(FAILED_CLOUD_SAVES_KEY, []));
   const [retryingFailedSaves, setRetryingFailedSaves] = useState(false);
   const [syncMeta, setSyncMeta] = useState(() => sanitizeSyncMeta(loadLS(SYNC_META_KEY, { lastAttempt: null, lastSuccess: null, lastError: null })));
@@ -2050,6 +1999,33 @@ function App() {
 
   useEffect(() => {
     if (!user) return;
+    const ensureSelfPlayer = async () => {
+      const { error: rpcErr } = await supabase.rpc('sync_self_player');
+      if (rpcErr) {
+        const isMissing = rpcErr.code === 'PGRST202' || rpcErr.code === '42883';
+        if (!isMissing) {
+          notifyCloudFailure(rpcErr.message);
+        } else {
+          const existing = players.find(p => p.linked_user_id === user.id);
+          if (!existing) {
+            const fallbackName = user.email?.split('@')[0] || 'Ja';
+            await supabase.from('players').insert({
+              id: generateId(),
+              owner_id: user.id,
+              linked_user_id: user.id,
+              name: fallbackName,
+              email: (user.email || '').toLowerCase() || null,
+            });
+          }
+        }
+      }
+      void refreshCloudData();
+    };
+    void ensureSelfPlayer();
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!user) return;
     let timer = null;
     let inFlight = false;
     const scheduleRefresh = () => {
@@ -2092,6 +2068,14 @@ function App() {
       supabase.removeChannel(channel);
     };
   }, [user?.id, refreshCloudData, skipLiveSessionCloud]);
+
+  useEffect(() => {
+    if (!user) return;
+    if (sessionPlayers.length > 0) return;
+    const selfPlayer = players.find(p => p.linked_user_id === user.id);
+    if (!selfPlayer) return;
+    setSessionPlayers([{ playerId: selfPlayer.id, buyIns: [defaultBuyIn], cashOut: '' }]);
+  }, [user?.id, players, sessionPlayers.length, defaultBuyIn]);
   const combinedHistory = React.useMemo(
     () => [...history, ...sharedHistory].sort((a, b) => new Date(a.date) - new Date(b.date)),
     [history, sharedHistory]
@@ -2276,56 +2260,6 @@ function App() {
     if (error) {
       notifyCloudFailure(error.message);
       return 'Nie udało się odrzucić zaproszenia.';
-    }
-    void refreshCloudData();
-    return null;
-  };
-  const linkPlayer = async (playerId, input) => {
-    input = input.trim();
-    let profileId = null;
-    const emailNorm = input.toLowerCase();
-    const phoneDigits = input.replace(/\D/g, '');
-    const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailNorm);
-    const isPhone = phoneDigits.length === 9;
-    if (isEmail) {
-      const emailNorm = input.toLowerCase();
-      const { data } = await supabase.from('profiles').select('id, display_name, email').eq('email', emailNorm).maybeSingle();
-      if (data) profileId = data.id;
-    } else if (isPhone) {
-      const { data, error: phoneErr } = await supabase.rpc('find_profile_by_phone', { p_phone: phoneDigits });
-      if (phoneErr) {
-        notifyCloudFailure(phoneErr.message);
-        return 'Wyszukiwanie po telefonie nie działa na serwerze. Uruchom migrację 006 w Supabase albo użyj emaila.';
-      }
-      if (data && data.length > 0) profileId = data[0].id;
-    } else {
-      return 'Podaj poprawny email albo numer telefonu (9 cyfr).';
-    }
-    if (!profileId) {
-      if (isEmail) {
-        return 'Nie znaleziono konta z tym adresem email. Znajomy musi być zarejestrowany — wtedy email trafia do profilu i można go wyszukać.';
-      }
-      if (isPhone) {
-        return 'Nie znaleziono konta z tym numerem. Znajomy musi wpisać ten sam numer w Profilu (9 cyfr).';
-      }
-      return 'Nie znaleziono konta.';
-    }
-    if (profileId === user.id) {
-      return 'Nie możesz połączyć gracza z własnym kontem.';
-    }
-    const prevRow = players.find(p => p.id === playerId);
-    setPlayers(prev => prev.map(p => p.id === playerId ? { ...p, linked_user_id: profileId } : p));
-    const { error: rpcErr } = await supabase.rpc('complete_friend_player_link', {
-      p_player_id: playerId,
-      p_friend_user_id: profileId,
-    });
-    if (rpcErr) {
-      if (prevRow) setPlayers(prev => prev.map(p => p.id === playerId ? prevRow : p));
-      notifyCloudFailure(rpcErr.message);
-      if (isFriendLinkRpcMissing(rpcErr)) {
-        return 'Serwer nie ma jeszcze funkcji powiązań — uruchom migrację 009 (SQL) w Supabase.';
-      }
-      return (rpcErr.message || '').trim() || 'Nie udało się połączyć znajomego. Spróbuj ponownie.';
     }
     void refreshCloudData();
     return null;
@@ -2542,6 +2476,14 @@ function App() {
     setSharedHistory([]);
     setTab('session');
   };
+  const handleManualRefresh = async () => {
+    setManualRefreshBusy(true);
+    try {
+      await refreshCloudData();
+    } finally {
+      setManualRefreshBusy(false);
+    }
+  };
 
   if (authLoading) return <LoadingScreen />;
   if (emailConfirmed) return <EmailConfirmedScreen onContinue={() => setEmailConfirmed(false)} />;
@@ -2594,11 +2536,11 @@ function App() {
         )}
 
         <main className="flex-1 main-scroll-pad">
-          {tab === 'players' && <PlayersTab players={players} sessionPlayers={sessionPlayers} onAddPlayer={addPlayer} onUpdatePlayer={updatePlayer} onRemovePlayer={removePlayer} onAddToSession={addToSession} onLinkPlayer={linkPlayer} onUnlinkPlayer={unlinkPlayer} />}
+          {tab === 'players' && <PlayersTab players={players} sessionPlayers={sessionPlayers} onAddPlayer={addPlayer} onUpdatePlayer={updatePlayer} onRemovePlayer={removePlayer} onAddToSession={addToSession} onUnlinkPlayer={unlinkPlayer} currentUserId={user.id} />}
           {tab === 'session' && <SessionTab players={players} sessionPlayers={sessionPlayers} defaultBuyIn={defaultBuyIn} totalPot={totalPot} onDefaultBuyInChange={setDefaultBuyIn} onAddBuyIn={addBuyIn} onRemoveBuyIn={removeBuyIn} onRemoveFromSession={removeFromSession} onAddToSession={addToSession} onGoToSettlement={() => setTab('settlement')} />}
           {tab === 'settlement' && <SettlementTab players={players} sessionPlayers={sessionPlayers} transactions={transactions} settled={settled} totalPot={totalPot} onSetCashOut={setCashOut} onCalculate={handleCalculate} onResetSession={resetSession} onSaveAndFinish={saveAndFinishSession} savingSession={savingSession} saveStatus={saveStatus} />}
           {tab === 'history' && <HistoryTab history={combinedHistory} onUpdateSession={updateSession} onDeleteSession={deleteSession} failedSyncCount={failedCloudSaves.length} failedSessionIds={failedCloudSaves.map(x => x.sessionId)} onRetryFailedSaves={retryFailedSaves} retryingFailedSaves={retryingFailedSaves} />}
-          {tab === 'profile' && <ProfileView user={user} history={combinedHistory} players={players} pendingInvites={pendingInvites} onAcceptInvite={acceptInvite} onRejectInvite={rejectInvite} onUnlinkPlayer={unlinkPlayer} onSignOut={handleSignOut} syncMeta={syncMeta} onRetrySyncFailed={retryFailedSaves} retryingFailedSaves={retryingFailedSaves} failedCloudSavesCount={failedCloudSaves.length} />}
+          {tab === 'profile' && <ProfileView user={user} history={combinedHistory} players={players} pendingInvites={pendingInvites} onAcceptInvite={acceptInvite} onRejectInvite={rejectInvite} onUnlinkPlayer={unlinkPlayer} onSignOut={handleSignOut} onRefresh={handleManualRefresh} refreshBusy={manualRefreshBusy} syncMeta={syncMeta} onRetrySyncFailed={retryFailedSaves} retryingFailedSaves={retryingFailedSaves} failedCloudSavesCount={failedCloudSaves.length} />}
         </main>
 
         <nav className="nav-safe fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-lg bg-green-950/90 backdrop-blur-sm border-t border-green-900 flex z-10" role="navigation" aria-label="Główne zakładki">
