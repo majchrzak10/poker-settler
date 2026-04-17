@@ -680,6 +680,7 @@ function PlayersTab({ players, sessionPlayers, onAddPlayer, onUpdatePlayer, onRe
         ) : players.map(p => {
           const inSession = sessionPlayers.some(sp => sp.playerId === p.id);
           const isEditing = editingId === p.id;
+          const isSelfPlayer = p.linked_user_id === currentUserId;
           const emailNorm = (p.email || '').trim().toLowerCase();
           const hasAccount = emailNorm ? accountByEmail[emailNorm] : undefined;
           const inviteMeta = emailNorm ? outgoingInviteMetaByEmail[emailNorm] : null;
@@ -777,7 +778,12 @@ function PlayersTab({ players, sessionPlayers, onAddPlayer, onUpdatePlayer, onRe
                     <button onClick={() => enterEdit(p)} className="shrink-0 text-green-700 hover:text-green-300 transition-colors p-1">
                       <IconPencil />
                     </button>
-                    <button onClick={() => onRemovePlayer(p.id)} className="shrink-0 text-green-900 hover:text-rose-400 transition-colors p-1">
+                    <button
+                      onClick={() => onRemovePlayer(p.id)}
+                      disabled={isSelfPlayer}
+                      title={isSelfPlayer ? 'Nie możesz usunąć własnego profilu gracza' : 'Usuń gracza'}
+                      className={`shrink-0 transition-colors p-1 ${isSelfPlayer ? 'text-green-900/40 cursor-not-allowed' : 'text-green-900 hover:text-rose-400'}`}
+                    >
                       <IconTrash />
                     </button>
                   </div>
@@ -2537,6 +2543,10 @@ function App() {
     const prevP = players;
     const prevSp = sessionPlayers;
     const row = players.find(p => p.id === id);
+    if (user && row?.linked_user_id === user.id) {
+      setCloudBanner('Nie możesz usunąć własnego profilu gracza.');
+      return;
+    }
     if (user && row?.linked_user_id) {
       const ok = await unlinkPlayer(id);
       if (!ok) return;
