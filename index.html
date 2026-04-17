@@ -84,6 +84,69 @@ const SUPABASE_KEY = 'sb_publishable_FHu3tWQSK9vt6XJGL3e7Vw_vPm5udfA';
 const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const FAILED_CLOUD_SAVES_KEY = 'poker_failed_cloud_saves';
 const SYNC_META_KEY = 'poker_sync_meta';
+
+// --- Telemetria klienta (migracja 016_client_logs). ---
+// Fire-and-forget — nigdy nie blokuje UI i nie rzuca wyjątku.
+const CLIENT_LOG_SESSION_KEY = 'poker_client_log_session';
+let _cachedLogSessionId = null;
+function getLogSessionId() {
+  if (_cachedLogSessionId) return _cachedLogSessionId;
+  try {
+    let v = sessionStorage.getItem(CLIENT_LOG_SESSION_KEY);
+    if (!v) {
+      v = (window.crypto?.randomUUID?.() || (Date.now().toString(36) + Math.random().toString(36).slice(2)));
+      sessionStorage.setItem(CLIENT_LOG_SESSION_KEY, v);
+    }
+    _cachedLogSessionId = v;
+    return v;
+  } catch (_) { return null; }
+}
+async function logClientEvent(level, event, context) {
+  try {
+    const sessionRes = await supabase.auth.getSession();
+    const user_id = sessionRes?.data?.session?.user?.id || null;
+    if (!user_id) return; // RLS wymaga authenticated; niezalogowany nie ma sensu logować tu.
+    const device = (typeof navigator !== 'undefined' && navigator.userAgent || '').slice(0, 200);
+    const safeContext = (context && typeof context === 'object' && !Array.isArray(context))
+      ? context
+      : { value: String(context ?? '') };
+    const payload = {
+      user_id,
+      session_id: getLogSessionId(),
+      level: (level === 'warn' || level === 'info') ? level : 'error',
+      event: String(event || 'unknown').slice(0, 120),
+      context: safeContext,
+      device,
+      app_version: (window.POKER_APP_VERSION || null)
+    };
+    const { error } = await supabase.from('client_logs').insert(payload);
+    if (error) { try { console.warn('client_logs insert failed:', error.message); } catch (_) {} }
+  } catch (e) {
+    try { console.warn('logClientEvent threw:', e?.message || e); } catch (_) {}
+  }
+}
+window.logClientEvent = logClientEvent;
+
+window.addEventListener('error', ev => {
+  try {
+    logClientEvent('error', 'window_error', {
+      message: ev?.error?.message || ev?.message || 'unknown',
+      stack: (ev?.error?.stack || '').slice(0, 800),
+      filename: ev?.filename, lineno: ev?.lineno, colno: ev?.colno
+    });
+  } catch (_) {}
+});
+window.addEventListener('unhandledrejection', ev => {
+  try {
+    const r = ev?.reason;
+    logClientEvent('error', 'unhandled_rejection', {
+      message: r?.message || String(r || 'unknown'),
+      stack: (r?.stack || '').slice(0, 800)
+    });
+  } catch (_) {}
+});
+// --- koniec telemetrii ---
+
 const { plnToCents, settleDebts, pluralPL, formatPln } = window.PokerSettlerCore;
 
 function buildSessionRpcArgs(sessionRow, sessionPlayersRows, transferRows, participationRows) {
@@ -1931,6 +1994,14 @@ function App() {
     }
     if (playersRes.error || sessionsRes.error) {
       console.warn('refreshCloudData players/sessions', playersRes.error, sessionsRes.error);
+      try {
+        window.logClientEvent && window.logClientEvent('error', 'refresh_cloud_failed', {
+          players_error: playersRes.error?.message || null,
+          players_code: playersRes.error?.code || null,
+          sessions_error: sessionsRes.error?.message || null,
+          sessions_code: sessionsRes.error?.code || null
+        });
+      } catch (_) {}
       return;
     }
     setSyncMeta(prev => (prev.lastError ? { ...prev, lastError: null } : prev));
@@ -2099,7 +2170,10 @@ function App() {
         reconnectScheduled = false;
         setSyncChannelNonce(n => n + 1);
       }, 1200);
-      if (reason) console.warn('sync channel reconnect scheduled:', reason);
+      if (reason) {
+        try { console.warn('sync channel reconnect scheduled:', reason); } catch (_) {}
+        try { window.logClientEvent && window.logClientEvent('warn', 'realtime_reconnect', { reason: String(reason) }); } catch (_) {}
+      }
     };
     let channel = supabase.channel(`sync-${user.id}-${syncChannelNonce}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'players', filter: `owner_id=eq.${user.id}` }, scheduleRefresh)
@@ -2549,6 +2623,14 @@ function App() {
           setSaveStatus({ type: 'error', message: 'Sesja zapisana lokalnie. Chmura nie zapisała wszystkiego, spróbuj ponownie później.' });
         }
         console.error('Cloud save failed:', e);
+        try {
+          window.logClientEvent && window.logClientEvent('error', 'save_session_failed', {
+            message: msg?.slice?.(0, 300) || String(e),
+            code: e?.code || null,
+            classifier: (e?.code === 'MISSING_SESSION_PLAYERS' || isSessionPlayerFkError(e)) ? 'missing_players' : 'other',
+            session_id: sessionId
+          });
+        } catch (_) {}
       }
     }
     setSavingSession(false);
