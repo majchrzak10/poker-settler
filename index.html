@@ -1146,7 +1146,6 @@ const PERIODS = [
 
 function HistoryTab({ history, onUpdateSession, onDeleteSession, failedSyncCount, failedSessionIds, onRetryFailedSaves, retryingFailedSaves }) {
   const [period, setPeriod] = useState(null);
-  const [selectedStatPlayerId, setSelectedStatPlayerId] = useState('');
   const [expandedId, setExpandedId] = useState(null);
   const [editingIds, setEditingIds] = useState({});
   const [sessionDrafts, setSessionDrafts] = useState({});
@@ -1160,18 +1159,7 @@ function HistoryTab({ history, onUpdateSession, onDeleteSession, failedSyncCount
   const filteredHistory = period === null ? ownedHistoryForStats : ownedHistoryForStats.slice(-period);
   const stats = calculateAllTimeStats(filteredHistory);
   const sorted = [...history].reverse();
-  const drilldownSessions = React.useMemo(() => {
-    if (!selectedStatPlayerId) return sorted;
-    return sorted.filter(session => (session.players || []).some(p => p.id === selectedStatPlayerId));
-  }, [sorted, selectedStatPlayerId]);
-  const selectedStatPlayer = React.useMemo(
-    () => stats.find(s => s.id === selectedStatPlayerId) || null,
-    [stats, selectedStatPlayerId]
-  );
-  useEffect(() => {
-    if (!selectedStatPlayerId) return;
-    if (!stats.some(s => s.id === selectedStatPlayerId)) setSelectedStatPlayerId('');
-  }, [stats, selectedStatPlayerId]);
+  const drilldownSessions = sorted;
   const archiveSlice = drilldownSessions.slice(0, archiveLimit);
   const failedSessionIdSet = React.useMemo(() => new Set(failedSessionIds), [failedSessionIds]);
 
@@ -1238,7 +1226,7 @@ function HistoryTab({ history, onUpdateSession, onDeleteSession, failedSyncCount
       )}
       <div>
         <h2 className="text-lg font-bold text-white tracking-tight">Historia</h2>
-        <p className="text-xs text-green-200/55 mt-0.5">{history.length} {pluralPL(history.length, 'sesja', 'sesje', 'sesji')} w archiwum · podsumowanie All time i drilldown</p>
+        <p className="text-xs text-green-200/55 mt-0.5">{history.length} {pluralPL(history.length, 'sesja', 'sesje', 'sesji')} w archiwum · podsumowanie All time</p>
       </div>
 
       <div className="flex gap-1.5 flex-wrap">
@@ -1265,10 +1253,9 @@ function HistoryTab({ history, onUpdateSession, onDeleteSession, failedSyncCount
             <p className="text-green-200/30 text-xs mt-1">Zagraj i zapisz pierwszą sesję.</p>
           </div>
         ) : stats.map((s, idx) => {
-          const selected = selectedStatPlayerId === s.id;
           return (
-            <button key={s.id} type="button" onClick={() => { setSelectedStatPlayerId(prev => prev === s.id ? '' : s.id); setArchiveLimit(25); }}
-              className={`w-full bg-black/30 border rounded-2xl px-4 py-3 flex items-center gap-3 text-left transition-colors ${selected ? 'border-rose-700 bg-rose-950/20' : 'border-green-900 hover:border-green-700'}`}>
+            <div key={s.id}
+              className="w-full bg-black/30 border rounded-2xl px-4 py-3 flex items-center gap-3 text-left border-green-900">
               <div className="w-8 text-center shrink-0">
                 {idx < 3 ? <span className="text-lg">{MEDALS[idx]}</span> : <span className="text-sm text-green-200/40 font-semibold">#{idx + 1}</span>}
               </div>
@@ -1277,32 +1264,20 @@ function HistoryTab({ history, onUpdateSession, onDeleteSession, failedSyncCount
               </div>
               <div className="flex-1 min-w-0">
                 <p className="font-semibold text-white text-sm truncate">{s.name}</p>
-                <p className="text-xs text-green-200/40">{s.gamesPlayed} {pluralPL(s.gamesPlayed, 'gra', 'gry', 'gier')} · kliknij, aby zobaczyć sesje</p>
+                <p className="text-xs text-green-200/40">{s.gamesPlayed} {pluralPL(s.gamesPlayed, 'gra', 'gry', 'gier')}</p>
               </div>
               <NetBadge value={s.totalNetBalance} />
-            </button>
+            </div>
           );
         })}
       </div>
-
-      {selectedStatPlayer && (
-        <div className="bg-rose-950/20 border border-rose-900/70 rounded-2xl p-3 flex items-center justify-between gap-3">
-          <p className="text-xs text-rose-200/90">
-            Drilldown: <span className="font-semibold text-white">{selectedStatPlayer.name}</span> · {drilldownSessions.length} {pluralPL(drilldownSessions.length, 'sesja', 'sesje', 'sesji')} · wynik {selectedStatPlayer.totalNetBalance >= 0 ? '+' : '−'}{formatPln(Math.abs(selectedStatPlayer.totalNetBalance))} PLN
-          </p>
-          <button type="button" onClick={() => setSelectedStatPlayerId('')}
-            className="text-xs border border-rose-800 rounded-lg px-2.5 py-1.5 text-rose-100/90 hover:bg-rose-900/30 transition-colors">
-            Wyczyść
-          </button>
-        </div>
-      )}
 
       <div className="space-y-2">
           <p className="text-xs text-green-200/60 uppercase tracking-wider px-1">Zapisane sesje</p>
           {drilldownSessions.length === 0 ? (
             <div className="text-center py-12 bg-black/20 rounded-2xl border border-dashed border-green-900">
-              <p className="text-green-200/50 text-sm">{selectedStatPlayer ? 'Brak sesji w drilldown.' : 'Brak sesji.'}</p>
-              <p className="text-green-200/30 text-xs mt-1">{selectedStatPlayer ? 'Ten gracz nie ma sesji w wybranym zakresie.' : 'Zakończ i zapisz pierwszą grę.'}</p>
+              <p className="text-green-200/50 text-sm">Brak sesji.</p>
+              <p className="text-green-200/30 text-xs mt-1">Zakończ i zapisz pierwszą grę.</p>
             </div>
           ) : (
             <>
@@ -1325,8 +1300,8 @@ function HistoryTab({ history, onUpdateSession, onDeleteSession, failedSyncCount
                       </p>
                       {isPendingSync && <p className="text-[11px] text-yellow-300 mt-0.5">Oczekuje na zapis do chmury</p>}
                       {isShared && (
-                        <p className="text-[11px] text-emerald-300 mt-0.5">
-                          Gra znajomego (widok współdzielony){session.sharedNote ? ` — ${session.sharedNote}` : ''}
+                        <p className="text-[11px] text-emerald-300/90 mt-0.5 inline-flex items-center gap-1">
+                          <span aria-label="info" title={session.sharedNote || 'Sesja współdzielona'}>i</span>
                         </p>
                       )}
                     </div>
@@ -1487,8 +1462,6 @@ function ProfileView({ user, history, players, pendingInvites, outgoingInvites, 
   const [savingName, setSavingName] = useState(false);
   const [nameSaveError, setNameSaveError] = useState('');
   const [myGames, setMyGames] = useState([]);
-  const [unlinkingId, setUnlinkingId] = useState(null);
-  const [linkedProfileMap, setLinkedProfileMap] = useState({});
   const [editingPhone, setEditingPhone] = useState(false);
   const [draftPhone, setDraftPhone] = useState('');
   const [savingPhone, setSavingPhone] = useState(false);
@@ -1496,7 +1469,6 @@ function ProfileView({ user, history, players, pendingInvites, outgoingInvites, 
   const [inviteBusyId, setInviteBusyId] = useState(null);
   const [inviteMsg, setInviteMsg] = useState('');
   const [showSyncDetails, setShowSyncDetails] = useState(false);
-  const [isOnline, setIsOnline] = useState(() => (typeof navigator !== 'undefined' ? navigator.onLine : true));
 
   useEffect(() => {
     supabase.from('profiles').select('*').eq('id', user.id).single().then(({ data }) => {
@@ -1588,44 +1560,6 @@ function ProfileView({ user, history, players, pendingInvites, outgoingInvites, 
   );
 
   const displayName = profile?.display_name || user.email?.split('@')[0] || 'Gracz';
-  const friends = React.useMemo(() => players.filter(p => p.linked_user_id && p.linked_user_id !== user.id), [players, user.id]);
-  const lastSharedByPlayerId = React.useMemo(() => {
-    const out = {};
-    for (const session of history) {
-      for (const p of session.players || []) {
-        if (!p?.id) continue;
-        if (!out[p.id] || new Date(session.date).getTime() > new Date(out[p.id]).getTime()) {
-          out[p.id] = session.date;
-        }
-      }
-    }
-    return out;
-  }, [history]);
-
-  useEffect(() => {
-    const linkedIds = [...new Set(friends.map(f => f.linked_user_id).filter(Boolean))];
-    if (linkedIds.length === 0) {
-      setLinkedProfileMap({});
-      return;
-    }
-    supabase.from('profiles').select('id, display_name, email, phone').in('id', linkedIds).then(({ data }) => {
-      const map = {};
-      for (const id of linkedIds) map[id] = { exists: false };
-      for (const row of (data || [])) map[row.id] = { exists: true, display_name: row.display_name, email: row.email, phone: row.phone };
-      setLinkedProfileMap(map);
-    });
-  }, [friends]);
-
-  useEffect(() => {
-    const onOnline = () => setIsOnline(true);
-    const onOffline = () => setIsOnline(false);
-    window.addEventListener('online', onOnline);
-    window.addEventListener('offline', onOffline);
-    return () => {
-      window.removeEventListener('online', onOnline);
-      window.removeEventListener('offline', onOffline);
-    };
-  }, []);
 
   return (
     <div className="p-4 space-y-5 pb-6">
@@ -1643,16 +1577,9 @@ function ProfileView({ user, history, players, pendingInvites, outgoingInvites, 
           </button>
         </div>
         <p className="text-xs text-green-200/55 mt-0.5">Konto i synchronizacja</p>
-        <div className="mt-2 flex flex-wrap gap-2">
-          <span className={`text-[11px] px-2 py-1 rounded-lg border ${isOnline ? 'text-emerald-300 border-emerald-800 bg-emerald-900/20' : 'text-rose-300 border-rose-800 bg-rose-900/20'}`}>
-            {isOnline ? 'online' : 'offline'}
-          </span>
-          <span className="text-[11px] px-2 py-1 rounded-lg border border-green-900 text-green-200/70 bg-black/25">
-            Ostatni sync: {formatSyncStamp(syncMeta?.lastSuccess)}
-          </span>
-          <span className="text-[11px] px-2 py-1 rounded-lg border border-green-900 text-green-200/60 bg-black/20">
-            Ostatnia próba: {formatSyncStamp(syncMeta?.lastAttempt)}
-          </span>
+        <div className="mt-2 inline-flex items-center gap-2 text-xs text-emerald-300 bg-emerald-900/20 border border-emerald-800 rounded-lg px-2.5 py-1.5">
+          <span className="inline-block w-2 h-2 rounded-full bg-emerald-400" />
+          Synchronizacja OK
         </div>
       </div>
       <div className="bg-black/30 border border-green-900 rounded-2xl p-4 space-y-3">
@@ -1835,51 +1762,6 @@ function ProfileView({ user, history, players, pendingInvites, outgoingInvites, 
       </div>
 
       <div>
-        <h2 className="text-sm font-semibold uppercase tracking-wider text-green-200/60 mb-3">Znajomi ({friends.length})</h2>
-        {friends.length === 0 ? (
-          <div className="text-center py-10 bg-black/20 rounded-2xl border border-dashed border-green-900">
-            <p className="text-green-200/50 text-sm">Brak połączonych znajomych.</p>
-            <p className="text-green-200/30 text-xs mt-1">Dodaj gracza z emailem i wyślij zaproszenie w zakładce Gracze.</p>
-          </div>
-        ) : friends.map(friend => {
-          const profileInfo = linkedProfileMap[friend.linked_user_id];
-          const profileExists = profileInfo?.exists;
-          const lastDate = lastSharedByPlayerId[friend.id];
-          const profileLabel = profileInfo?.display_name
-            ? `${profileInfo.display_name}${profileInfo.email ? ' · ' + profileInfo.email : ''}`
-            : (profileInfo?.email || friend.linked_user_id);
-          const friendPhone = profileInfo?.phone || friend.phone;
-          return (
-            <div key={friend.id} className="bg-black/30 border border-green-900 rounded-2xl px-4 py-3 flex items-center gap-3 mb-2">
-              <div className="w-9 h-9 rounded-full bg-green-900/70 text-green-200 flex items-center justify-center text-sm font-bold shrink-0">
-                {friend.name?.[0]?.toUpperCase() || '?'}
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="font-semibold text-white text-sm truncate">{friend.name}</p>
-                <p className="text-xs text-green-200/50 truncate">{profileLabel}</p>
-                {friendPhone && <p className="text-xs text-green-200/40 truncate">tel: {formatPhone(friendPhone)}</p>}
-                <p className={`text-xs mt-0.5 ${profileExists ? 'text-emerald-400/80' : 'text-yellow-300/80'}`}>
-                  {profileExists ? 'Połączenie aktywne' : 'Nie udało się potwierdzić konta'}
-                  {lastDate ? ` · Ostatnia wspólna gra: ${new Date(lastDate).toLocaleDateString('pl-PL')}` : ' · Brak wspólnych gier'}
-                </p>
-              </div>
-              <button
-                onClick={async () => {
-                  setUnlinkingId(friend.id);
-                  await onUnlinkPlayer(friend.id);
-                  setUnlinkingId(null);
-                }}
-                disabled={unlinkingId === friend.id}
-                className="shrink-0 text-xs text-rose-400 border border-rose-900/50 hover:bg-rose-900/30 disabled:opacity-50 px-3 py-2 rounded-xl transition-colors"
-              >
-                {unlinkingId === friend.id ? '...' : 'Odepnij'}
-              </button>
-            </div>
-          );
-        })}
-      </div>
-
-      <div>
         <h2 className="text-lg font-bold text-white tracking-tight mb-3">Moje gry ({myGames.length})</h2>
         {myGames.length > 0 && (
           <div className={`rounded-2xl border p-4 mb-3 flex items-center justify-between ${totalMyGamesBalance > 0 ? 'bg-emerald-900/20 border-emerald-800' : totalMyGamesBalance < 0 ? 'bg-red-900/20 border-red-800/60' : 'bg-black/30 border-green-900'}`}>
@@ -1928,7 +1810,7 @@ const TABS = [
 const SCREEN_META = {
   players: 'Dodaj stałych graczy, zanim zaczniesz sesję.',
   session: 'Ustal buy-iny i kogo masz przy stole.',
-  settlement: 'Suma cash-outów musi równać się puli — wtedy zobaczysz przelewy.',
+  settlement: '',
   history: 'Archiwum sesji i ranking.',
   profile: 'Konto i synchronizacja z chmurą.',
 };
@@ -2091,7 +1973,7 @@ function App() {
         )
       );
       setPendingInvites(incoming);
-      const outgoing = (invitesData || []).filter(inv => inv.requester_user_id === user.id);
+      const outgoing = (invitesData || []).filter(inv => inv.requester_user_id === user.id && inv.status !== 'accepted');
       setOutgoingInvites(outgoing);
       const outgoingMap = {};
       for (const inv of outgoing) {
