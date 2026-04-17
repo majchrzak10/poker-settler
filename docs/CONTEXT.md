@@ -58,6 +58,7 @@ Kolejność wg numerów plików. **Uwaga:** są **dwa pliki `005_*`** — przy r
 | 016 | `016_client_logs.sql` | Telemetria `client_logs` (RLS) |
 | 017 | `017_session_players_fk_set_null.sql` | FK przy usuwaniu gracza |
 | 018 | `018_idempotent_remove_friend_link.sql` | Idempotentne odpinanie znajomego |
+| 019 | `019_players_unique_phone_per_owner.sql` | Unikalny numer (9 cyfr) wśród `players` u tego samego `owner_id` |
 
 Skrypt **`scripts/diagnose.mjs`** (wymaga `SUPABASE_PAT` z dashboardu Supabase) — szybki przegląd tabel, publikacji Realtime, RLS, orfanów (bez logowania sekretów do repo).
 

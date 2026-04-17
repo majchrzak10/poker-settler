@@ -24,8 +24,8 @@ Kwoty w Supabase są przechowywane jako **centy (integer)**. UI pracuje na PLN (
    const SUPABASE_KEY = 'sb_publishable_...';  // anon/public key
    ```
 3. Uruchom migracje **po kolei** w **SQL Editor** (Supabase Dashboard), pliki z `supabase/migrations/`:
-   `000` … `018` (m.in. **007** RLS, **008** Realtime, **009** RPC znajomi, **010–012** zaproszenia, **013** email, **014** pełna publikacja Realtime, **015** backfill profil/self-player, **016** `client_logs`, **017** FK `session_players` → `SET NULL` przy usuwaniu gracza, **018** idempotentne `remove_friend_player_link`).
-   Dla starszych baz szczególnie ważne są: **003** (trigger profilu), **005** (backfill profili), **009/010/012**, **013**, **014** (sync między urządzeniami), **015–018** (spójność kont i usuwanie / odpinanie).
+   `000` … `019` (m.in. **007** RLS, **008** Realtime, **009** RPC znajomi, **010–012** zaproszenia, **013** email, **014** pełna publikacja Realtime, **015** backfill profil/self-player, **016** `client_logs`, **017** FK `session_players` → `SET NULL` przy usuwaniu gracza, **018** idempotentne `remove_friend_player_link`, **019** unikalny numer telefonu wśród graczy u danego właściciela).
+   Dla starszych baz szczególnie ważne są: **003** (trigger profilu), **005** (backfill profili), **009/010/012**, **013**, **014** (sync między urządzeniami), **015–019** (spójność kont, usuwanie / odpinanie, telefony).
    Migracja **003** dodaje trigger: przy rejestracji od razu powstaje wiersz w `profiles` z emailem. Jeśli masz już własny trigger z panelu Supabase, uruchom skrypt świadomie (może nadpisać funkcję `handle_new_user`).
 4. Realtime: migracja **008** dopisuje tabele do publikacji `supabase_realtime`; jeśli wdrażasz ręcznie starszą bazę, w Dashboard → **Database → Publications** upewnij się, że te tabele są w replikacji (jak w **008**).
 

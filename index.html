@@ -352,6 +352,12 @@ function formatPhone(raw) {
   return digits.replace(/(\d{3})(?=\d)/g, '$1 ');
 }
 
+/** Same 9 cyfr co w formatPhone — do wykrywania duplikatów numeru u jednego właściciela. */
+function normalizePhoneDigits(raw) {
+  if (raw == null) return '';
+  return String(raw).replace(/\D/g, '').slice(0, 9);
+}
+
 function mapSharedParticipations(rows) {
   const bySession = new Map();
   for (const row of rows || []) {
@@ -2424,15 +2430,27 @@ function App() {
   );
 
   const addPlayer = async (name, phone, email) => {
-    const id = generateId();
     const emailNorm = normalizeEmail(email);
+    const phoneDigits = normalizePhoneDigits(phone);
+    if (phoneDigits.length >= 9) {
+      const dup = players.some(p => normalizePhoneDigits(p.phone) === phoneDigits);
+      if (dup) {
+        setCloudBanner('Masz już gracza z tym numerem telefonu. Zmień numer albo edytuj istniejący wpis.');
+        return;
+      }
+    }
+    const id = generateId();
     const row = { id, name, phone, email: emailNorm };
     setPlayers(prev => [...prev, row]);
     if (!user) return;
     const { error } = await supabase.from('players').insert({ id, owner_id: user.id, name, phone: phone || null, email: emailNorm || null });
     if (error) {
       setPlayers(prev => prev.filter(p => p.id !== id));
-      notifyCloudFailure(error.message);
+      if (error.code === '23505') {
+        notifyCloudFailure('Ten numer jest już przypisany do innego gracza na Twojej liście.');
+      } else {
+        notifyCloudFailure(error.message);
+      }
     } else {
       try {
         const inviteCreated = await createInviteIfPossible(id, emailNorm);
@@ -2450,12 +2468,24 @@ function App() {
   const updatePlayer = async (id, name, phone, email) => {
     const prevRow = players.find(p => p.id === id);
     const emailNorm = normalizeEmail(email);
+    const phoneDigits = normalizePhoneDigits(phone);
+    if (phoneDigits.length >= 9) {
+      const dup = players.some(p => p.id !== id && normalizePhoneDigits(p.phone) === phoneDigits);
+      if (dup) {
+        setCloudBanner('Masz już innego gracza z tym numerem telefonu.');
+        return;
+      }
+    }
     setPlayers(prev => prev.map(p => p.id === id ? { ...p, name, phone, email: emailNorm } : p));
     if (!user) return;
     const { error } = await supabase.from('players').update({ name, phone: phone || null, email: emailNorm || null }).eq('id', id);
     if (error && prevRow) {
       setPlayers(prev => prev.map(p => p.id === id ? prevRow : p));
-      notifyCloudFailure(error.message);
+      if (error.code === '23505') {
+        notifyCloudFailure('Ten numer jest już przypisany do innego gracza na Twojej liście.');
+      } else {
+        notifyCloudFailure(error.message);
+      }
     } else if (!error) {
       try {
         const inviteCreated = await createInviteIfPossible(id, emailNorm);
