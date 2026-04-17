@@ -2504,6 +2504,7 @@ function App() {
     if (rpcErr) {
       if (prevRow) setPlayers(prev => prev.map(p => p.id === playerId ? prevRow : p));
       notifyCloudFailure(rpcErr.message);
+      void refreshCloudData();
       if (isFriendLinkRpcMissing(rpcErr)) {
         return false;
       }
