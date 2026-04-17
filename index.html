@@ -558,7 +558,7 @@ function AuthScreen() {
 
 // ─── PlayersTab ───────────────────────────────────────────────────────────────
 
-function PlayersTab({ players, sessionPlayers, onAddPlayer, onUpdatePlayer, onRemovePlayer, onAddToSession, onUnlinkPlayer, currentUserId }) {
+function PlayersTab({ players, sessionPlayers, onAddPlayer, onUpdatePlayer, onRemovePlayer, onAddToSession, onUnlinkPlayer, currentUserId, accountByEmail, outgoingInviteByEmail }) {
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
@@ -613,6 +613,7 @@ function PlayersTab({ players, sessionPlayers, onAddPlayer, onUpdatePlayer, onRe
           <input value={email} onChange={e => setEmail(e.target.value)} placeholder="Email znajomego *" type="email" autoComplete="off"
             className={`w-full bg-black/40 rounded-xl px-4 py-3 text-sm text-white placeholder-green-700 border transition-colors focus:outline-none ${emailError ? 'border-red-500' : 'border-green-800 focus:border-rose-600'}`} />
           {emailError && <p className="text-xs text-red-400 px-1">Podaj poprawny adres email</p>}
+          {!emailError && email.trim().length > 0 && <p className="text-xs text-green-300/50 px-1">Jeśli email nie ma konta, gracz zostanie dodany ze statusem „Brak konta” (bez zaproszenia).</p>}
         </div>
         <button type="submit" disabled={!canSubmit}
           className="w-full flex items-center justify-center gap-2 bg-rose-800 hover:bg-rose-900 disabled:opacity-40 disabled:cursor-not-allowed rounded-xl py-3 text-sm font-semibold transition-colors">
@@ -629,6 +630,26 @@ function PlayersTab({ players, sessionPlayers, onAddPlayer, onUpdatePlayer, onRe
         ) : players.map(p => {
           const inSession = sessionPlayers.some(sp => sp.playerId === p.id);
           const isEditing = editingId === p.id;
+          const emailNorm = (p.email || '').trim().toLowerCase();
+          const hasAccount = emailNorm ? accountByEmail[emailNorm] : undefined;
+          const hasOutgoingInvite = !!(emailNorm && outgoingInviteByEmail[emailNorm]);
+          const statusLabel = p.linked_user_id
+            ? 'Połączony'
+            : hasOutgoingInvite
+              ? 'Zaproszenie wysłane'
+              : hasAccount === false
+                ? 'Brak konta'
+                : hasAccount === true
+                  ? 'Konto aktywne'
+                  : 'Niezweryfikowany';
+          const statusClass = p.linked_user_id
+            ? 'text-emerald-300 bg-emerald-900/40 border-emerald-700'
+            : hasOutgoingInvite
+              ? 'text-yellow-200 bg-yellow-900/30 border-yellow-800'
+              : hasAccount === false
+                ? 'text-rose-300 bg-rose-900/30 border-rose-800'
+                : 'text-green-200/80 bg-black/30 border-green-900';
+
           return (
             <div key={p.id} className="bg-black/30 rounded-2xl border border-green-900 px-4 py-3">
               {isEditing ? (
@@ -667,6 +688,7 @@ function PlayersTab({ players, sessionPlayers, onAddPlayer, onUpdatePlayer, onRe
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="font-medium text-white text-sm">{p.name}</p>
+                      <span className={`inline-block text-[10px] border rounded-md px-1.5 py-0.5 mb-1 ${statusClass}`}>{statusLabel}</span>
                       <p className="text-xs text-green-300/60">{p.phone || 'Brak numeru'}</p>
                       {p.email && <p className="text-[11px] text-green-300/45 truncate">{p.email}</p>}
                     </div>
@@ -703,7 +725,7 @@ function PlayersTab({ players, sessionPlayers, onAddPlayer, onUpdatePlayer, onRe
 
 // ─── SessionTab ───────────────────────────────────────────────────────────────
 
-function SessionTab({ players, sessionPlayers, defaultBuyIn, totalPot, onDefaultBuyInChange, onAddBuyIn, onRemoveBuyIn, onRemoveFromSession, onAddToSession, onGoToSettlement }) {
+function SessionTab({ players, sessionPlayers, defaultBuyIn, totalPot, autoAddMeToSession, onToggleAutoAddMe, onDefaultBuyInChange, onAddBuyIn, onRemoveBuyIn, onRemoveFromSession, onAddToSession, onGoToSettlement }) {
   const [showAdd, setShowAdd] = useState(false);
   const [buyInInput, setBuyInInput] = useState(String(defaultBuyIn));
 
@@ -744,6 +766,15 @@ function SessionTab({ players, sessionPlayers, defaultBuyIn, totalPot, onDefault
             className="w-28 bg-black/40 border border-green-800 rounded-xl px-4 py-2.5 text-white text-sm focus:outline-none focus:border-rose-600 transition-colors" />
           <span className="text-green-200/50 text-sm">PLN / wejście</span>
         </div>
+        <label className="mt-3 flex items-center justify-between gap-3 text-xs text-green-200/65">
+          <span>Automatycznie dodawaj mnie do nowej sesji</span>
+          <input
+            type="checkbox"
+            checked={!!autoAddMeToSession}
+            onChange={e => onToggleAutoAddMe?.(e.target.checked)}
+            className="accent-rose-700 w-4 h-4"
+          />
+        </label>
       </div>
 
       <div className="space-y-2">
@@ -864,9 +895,6 @@ function SettlementTab({ players, sessionPlayers, transactions, settled, totalPo
 
   const copyReport = async () => {
     const report = buildReport();
-    if (navigator.share) {
-      try { await navigator.share({ text: report }); return; } catch (e) { if (e?.name === 'AbortError') return; }
-    }
     try {
       await navigator.clipboard.writeText(report);
       setCopied(true);
@@ -997,7 +1025,7 @@ function SettlementTab({ players, sessionPlayers, transactions, settled, totalPo
           )}
           <button onClick={copyReport}
             className="w-full flex items-center justify-center gap-2 bg-black/30 hover:bg-black/50 border border-green-900 rounded-xl py-3.5 text-sm font-semibold transition-colors">
-            {copied ? <IconCheck /> : <IconShare />} {copied ? 'Skopiowano!' : 'Udostępnij wyniki'}
+            {copied ? <IconCheck /> : <IconShare />} {copied ? 'Skopiowano!' : 'Kopiuj rozliczenie'}
           </button>
           <button onClick={onResetSession}
             className="w-full flex items-center justify-center gap-2 bg-rose-950/50 hover:bg-rose-900/50 border border-rose-900/50 rounded-xl py-3.5 text-sm font-semibold text-rose-400 transition-colors">
@@ -1055,8 +1083,14 @@ const PERIODS = [
 ];
 
 function HistoryTab({ history, onUpdateSession, onDeleteSession, failedSyncCount, failedSessionIds, onRetryFailedSaves, retryingFailedSaves }) {
-  const [view, setView] = useState('leaderboard');
+  const [view, setView] = useState('archive');
   const [period, setPeriod] = useState(null);
+  const [filterPlayer, setFilterPlayer] = useState('');
+  const [filterFrom, setFilterFrom] = useState('');
+  const [filterTo, setFilterTo] = useState('');
+  const [filterMinPot, setFilterMinPot] = useState('');
+  const [filterMaxPot, setFilterMaxPot] = useState('');
+  const [filterText, setFilterText] = useState('');
   const [expandedId, setExpandedId] = useState(null);
   const [editingIds, setEditingIds] = useState({});
   const [sessionDrafts, setSessionDrafts] = useState({});
@@ -1070,7 +1104,40 @@ function HistoryTab({ history, onUpdateSession, onDeleteSession, failedSyncCount
   const filteredHistory = period === null ? ownedHistoryForStats : ownedHistoryForStats.slice(-period);
   const stats = calculateAllTimeStats(filteredHistory);
   const sorted = [...history].reverse();
-  const archiveSlice = sorted.slice(0, archiveLimit);
+  const filterPlayerOptions = React.useMemo(() => {
+    const map = new Map();
+    for (const session of history) {
+      for (const p of (session.players || [])) {
+        if (!map.has(p.id)) map.set(p.id, p.name);
+      }
+    }
+    return [...map.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name, 'pl'));
+  }, [history]);
+  const filteredSorted = React.useMemo(() => {
+    const fromMs = filterFrom ? new Date(`${filterFrom}T00:00:00`).getTime() : null;
+    const toMs = filterTo ? new Date(`${filterTo}T23:59:59`).getTime() : null;
+    const minPot = filterMinPot !== '' ? parseFloat(filterMinPot) : null;
+    const maxPot = filterMaxPot !== '' ? parseFloat(filterMaxPot) : null;
+    const text = (filterText || '').trim().toLowerCase();
+    return sorted.filter(session => {
+      const t = new Date(session.date).getTime();
+      if (fromMs && t < fromMs) return false;
+      if (toMs && t > toMs) return false;
+      if (minPot != null && session.totalPot < minPot) return false;
+      if (maxPot != null && session.totalPot > maxPot) return false;
+      if (filterPlayer && !(session.players || []).some(p => p.id === filterPlayer)) return false;
+      if (text) {
+        const hay = [
+          formatDate(session.date),
+          ...((session.players || []).map(p => p.name)),
+          ...((session.transfers || []).flatMap(t => [t.from, t.to]))
+        ].join(' ').toLowerCase();
+        if (!hay.includes(text)) return false;
+      }
+      return true;
+    });
+  }, [sorted, filterFrom, filterTo, filterMinPot, filterMaxPot, filterPlayer, filterText]);
+  const archiveSlice = filteredSorted.slice(0, archiveLimit);
   const failedSessionIdSet = React.useMemo(() => new Set(failedSessionIds), [failedSessionIds]);
 
   const enterEdit = session => {
@@ -1140,14 +1207,33 @@ function HistoryTab({ history, onUpdateSession, onDeleteSession, failedSyncCount
       </div>
 
       <div className="flex bg-black/30 border border-green-900 rounded-xl p-1 gap-1">
-        <button onClick={() => setView('leaderboard')}
-          className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-sm font-medium transition-colors ${view === 'leaderboard' ? 'bg-rose-800 text-white' : 'text-green-200/60 hover:text-green-200'}`}>
-          <IconTrend /> Ranking
-        </button>
-        <button onClick={() => setView('archive')}
-          className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-sm font-medium transition-colors ${view === 'archive' ? 'bg-rose-800 text-white' : 'text-green-200/60 hover:text-green-200'}`}>
+        <button disabled
+          className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-sm font-medium bg-rose-800 text-white">
           <IconClock /> Archiwum
         </button>
+      </div>
+
+      <div className="bg-black/20 border border-green-900/70 rounded-2xl p-3 space-y-2">
+        <p className="text-xs text-green-200/60 uppercase tracking-wider">Filtry historii</p>
+        <div className="grid grid-cols-2 gap-2">
+          <input type="date" value={filterFrom} onChange={e => setFilterFrom(e.target.value)}
+            className="bg-black/40 border border-green-800 rounded-lg px-2.5 py-2 text-xs text-white focus:outline-none focus:border-rose-600" />
+          <input type="date" value={filterTo} onChange={e => setFilterTo(e.target.value)}
+            className="bg-black/40 border border-green-800 rounded-lg px-2.5 py-2 text-xs text-white focus:outline-none focus:border-rose-600" />
+          <input type="number" min="0" placeholder="Pula od (PLN)" value={filterMinPot} onChange={e => setFilterMinPot(e.target.value)}
+            className="bg-black/40 border border-green-800 rounded-lg px-2.5 py-2 text-xs text-white focus:outline-none focus:border-rose-600" />
+          <input type="number" min="0" placeholder="Pula do (PLN)" value={filterMaxPot} onChange={e => setFilterMaxPot(e.target.value)}
+            className="bg-black/40 border border-green-800 rounded-lg px-2.5 py-2 text-xs text-white focus:outline-none focus:border-rose-600" />
+        </div>
+        <div className="grid grid-cols-1 gap-2">
+          <select value={filterPlayer} onChange={e => setFilterPlayer(e.target.value)}
+            className="bg-black/40 border border-green-800 rounded-lg px-2.5 py-2 text-xs text-white focus:outline-none focus:border-rose-600">
+            <option value="">Wszyscy gracze</option>
+            {filterPlayerOptions.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+          <input type="text" placeholder="Szukaj po nazwie / przelewie / dacie" value={filterText} onChange={e => setFilterText(e.target.value)}
+            className="bg-black/40 border border-green-800 rounded-lg px-2.5 py-2 text-xs text-white placeholder-green-700 focus:outline-none focus:border-rose-600" />
+        </div>
       </div>
 
       {view === 'leaderboard' && (
@@ -1375,7 +1461,7 @@ function HistoryTab({ history, onUpdateSession, onDeleteSession, failedSyncCount
 
 // ─── ProfileView ──────────────────────────────────────────────────────────────
 
-function ProfileView({ user, history, players, pendingInvites, onAcceptInvite, onRejectInvite, onUnlinkPlayer, onSignOut, onRefresh, refreshBusy, syncMeta, onRetrySyncFailed, retryingFailedSaves, failedCloudSavesCount }) {
+function ProfileView({ user, history, players, pendingInvites, onAcceptInvite, onRejectInvite, onUnlinkPlayer, onSignOut, onRefresh, onRenameSelf, refreshBusy, syncMeta, onRetrySyncFailed, retryingFailedSaves, failedCloudSavesCount }) {
   const [profile, setProfile] = useState(null);
   const [editingName, setEditingName] = useState(false);
   const [draftName, setDraftName] = useState('');
@@ -1458,9 +1544,9 @@ function ProfileView({ user, history, players, pendingInvites, onAcceptInvite, o
       setNameSaveError('Nie udało się zapisać. Spróbuj ponownie.');
       return;
     }
-    await supabase.from('players').update({ name: nextName }).eq('owner_id', user.id).eq('linked_user_id', user.id);
     setProfile(prev => ({ ...prev, display_name: nextName }));
     setEditingName(false);
+    if (onRenameSelf) await onRenameSelf(nextName);
     if (onRefresh) await onRefresh();
   };
 
@@ -1854,6 +1940,9 @@ function App() {
   const [history, setHistory] = useState(() => loadLS('poker_sessions_history', []));
   const [sharedHistory, setSharedHistory] = useState([]);
   const [pendingInvites, setPendingInvites] = useState([]);
+  const [outgoingInviteByEmail, setOutgoingInviteByEmail] = useState({});
+  const [accountByEmail, setAccountByEmail] = useState({});
+  const [autoAddMeToSession, setAutoAddMeToSession] = useState(() => loadLS('poker_auto_add_me', true));
   const [savingSession, setSavingSession] = useState(false);
   const [saveStatus, setSaveStatus] = useState(null);
   const [manualRefreshBusy, setManualRefreshBusy] = useState(false);
@@ -1872,6 +1961,7 @@ function App() {
   useDebouncedLocalStorage('poker_players', players);
   useDebouncedLocalStorage('poker_session', sessionPlayers);
   useDebouncedLocalStorage('poker_default_buyin', defaultBuyIn);
+  useDebouncedLocalStorage('poker_auto_add_me', autoAddMeToSession);
   useDebouncedLocalStorage('poker_sessions_history', history);
   useDebouncedLocalStorage(FAILED_CLOUD_SAVES_KEY, failedCloudSaves);
   useDebouncedLocalStorage(SYNC_META_KEY, syncMeta);
@@ -1889,6 +1979,25 @@ function App() {
     const m = msg || 'Błąd synchronizacji';
     recordSyncError(m);
     setCloudBanner(m);
+  };
+  const normalizeEmail = value => (value || '').trim().toLowerCase();
+  const findProfileByEmail = async emailNorm => {
+    if (!emailNorm) return null;
+    const { data, error } = await supabase.from('profiles').select('id').eq('email', emailNorm).maybeSingle();
+    if (error) throw error;
+    return data?.id || null;
+  };
+  const createInviteIfPossible = async (playerId, emailNorm) => {
+    if (!emailNorm || emailNorm === normalizeEmail(user?.email)) return false;
+    const profileId = await findProfileByEmail(emailNorm);
+    if (!profileId) return false;
+    const { error: inviteErr } = await supabase.from('friend_invites').insert({
+      requester_user_id: user.id,
+      requester_player_id: playerId,
+      invitee_email: emailNorm,
+    });
+    if (inviteErr && inviteErr.code !== '23505') throw inviteErr;
+    return true;
   };
 
   useEffect(() => {
@@ -1974,6 +2083,23 @@ function App() {
         )
       );
       setPendingInvites(incoming);
+      const outgoing = (invitesData || []).filter(inv => inv.requester_user_id === user.id);
+      const outgoingMap = {};
+      for (const inv of outgoing) {
+        const emailKey = normalizeEmail(inv.invitee_email);
+        if (emailKey) outgoingMap[emailKey] = true;
+      }
+      setOutgoingInviteByEmail(outgoingMap);
+    }
+    const playerEmails = [...new Set((cloudPlayers || []).map(p => normalizeEmail(p.email)).filter(Boolean))];
+    if (playerEmails.length === 0) {
+      setAccountByEmail({});
+    } else {
+      const { data: profileRows } = await supabase.from('profiles').select('email').in('email', playerEmails);
+      const existing = new Set((profileRows || []).map(r => normalizeEmail(r.email)));
+      const map = {};
+      for (const email of playerEmails) map[email] = existing.has(email);
+      setAccountByEmail(map);
     }
 
     if (liveDraft && !liveRes.error) {
@@ -2093,12 +2219,12 @@ function App() {
   }, [user?.id, refreshCloudData, skipLiveSessionCloud]);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user || !autoAddMeToSession) return;
     if (sessionPlayers.length > 0) return;
     const selfPlayer = players.find(p => p.linked_user_id === user.id);
     if (!selfPlayer) return;
     setSessionPlayers([{ playerId: selfPlayer.id, buyIns: [defaultBuyIn], cashOut: '' }]);
-  }, [user?.id, players, sessionPlayers.length, defaultBuyIn]);
+  }, [user?.id, players, sessionPlayers.length, defaultBuyIn, autoAddMeToSession]);
   const combinedHistory = React.useMemo(
     () => [...history, ...sharedHistory].sort((a, b) => new Date(a.date) - new Date(b.date)),
     [history, sharedHistory]
@@ -2235,7 +2361,7 @@ function App() {
 
   const addPlayer = async (name, phone, email) => {
     const id = generateId();
-    const emailNorm = (email || '').trim().toLowerCase();
+    const emailNorm = normalizeEmail(email);
     const row = { id, name, phone, email: emailNorm };
     setPlayers(prev => [...prev, row]);
     if (!user) return;
@@ -2244,20 +2370,22 @@ function App() {
       setPlayers(prev => prev.filter(p => p.id !== id));
       notifyCloudFailure(error.message);
     } else {
-      if (emailNorm && emailNorm !== (user.email || '').trim().toLowerCase()) {
-        const { error: inviteErr } = await supabase.from('friend_invites').insert({
-          requester_user_id: user.id,
-          requester_player_id: id,
-          invitee_email: emailNorm,
-        });
-        if (inviteErr && inviteErr.code !== '23505') notifyCloudFailure(inviteErr.message);
+      try {
+        const inviteCreated = await createInviteIfPossible(id, emailNorm);
+        if (inviteCreated) {
+          setCloudBanner('Gracz dodany. Zaproszenie zostało wysłane i pojawi się u znajomego w Profilu.');
+        } else if (emailNorm) {
+          setCloudBanner('Gracz dodany, ale email nie ma jeszcze konta. Status: Brak konta.');
+        }
+      } catch (inviteErr) {
+        notifyCloudFailure(inviteErr.message);
       }
       void refreshCloudData();
     }
   };
   const updatePlayer = async (id, name, phone, email) => {
     const prevRow = players.find(p => p.id === id);
-    const emailNorm = (email || '').trim().toLowerCase();
+    const emailNorm = normalizeEmail(email);
     setPlayers(prev => prev.map(p => p.id === id ? { ...p, name, phone, email: emailNorm } : p));
     if (!user) return;
     const { error } = await supabase.from('players').update({ name, phone: phone || null, email: emailNorm || null }).eq('id', id);
@@ -2265,6 +2393,14 @@ function App() {
       setPlayers(prev => prev.map(p => p.id === id ? prevRow : p));
       notifyCloudFailure(error.message);
     } else if (!error) {
+      try {
+        const inviteCreated = await createInviteIfPossible(id, emailNorm);
+        if (inviteCreated && normalizeEmail(prevRow?.email) !== emailNorm) {
+          setCloudBanner('Email zaktualizowany. Zaproszenie zostało wysłane.');
+        }
+      } catch (inviteErr) {
+        notifyCloudFailure(inviteErr.message);
+      }
       void refreshCloudData();
     }
   };
@@ -2507,6 +2643,34 @@ function App() {
       setManualRefreshBusy(false);
     }
   };
+  const renameSelfEverywhere = async nextName => {
+    if (!user || !nextName) return;
+    const myEmail = normalizeEmail(user.email);
+    const selfIds = players
+      .filter(p => p.linked_user_id === user.id || normalizeEmail(p.email) === myEmail)
+      .map(p => p.id);
+    if (selfIds.length === 0) return;
+    setPlayers(prev => prev.map(p => selfIds.includes(p.id) ? { ...p, name: nextName } : p));
+    setHistory(prev => prev.map(session => ({
+      ...session,
+      players: (session.players || []).map(sp => selfIds.includes(sp.id) ? { ...sp, name: nextName } : sp),
+      transfers: (session.transfers || []).map(t => ({
+        ...t,
+        from: selfIds.some(id => (session.players || []).find(p => p.id === id && p.name === t.from)) ? nextName : t.from,
+        to: selfIds.some(id => (session.players || []).find(p => p.id === id && p.name === t.to)) ? nextName : t.to,
+      })),
+    })));
+    const { error: playersErr } = await supabase.from('players').update({ name: nextName }).eq('owner_id', user.id).eq('linked_user_id', user.id);
+    if (playersErr) notifyCloudFailure(playersErr.message);
+    if (selfIds.length > 0) {
+      const { data: mySessions } = await supabase.from('sessions').select('id').eq('owner_id', user.id);
+      const sessionIds = (mySessions || []).map(s => s.id);
+      if (sessionIds.length > 0) {
+        await supabase.from('session_players').update({ player_name: nextName }).in('session_id', sessionIds).in('player_id', selfIds);
+      }
+      await supabase.from('participations').update({ player_name: nextName }).eq('user_id', user.id);
+    }
+  };
 
   if (authLoading) return <LoadingScreen />;
   if (emailConfirmed) return <EmailConfirmedScreen onContinue={() => setEmailConfirmed(false)} />;
@@ -2559,11 +2723,11 @@ function App() {
         )}
 
         <main className="flex-1 main-scroll-pad">
-          {tab === 'players' && <PlayersTab players={players} sessionPlayers={sessionPlayers} onAddPlayer={addPlayer} onUpdatePlayer={updatePlayer} onRemovePlayer={removePlayer} onAddToSession={addToSession} onUnlinkPlayer={unlinkPlayer} currentUserId={user.id} />}
-          {tab === 'session' && <SessionTab players={players} sessionPlayers={sessionPlayers} defaultBuyIn={defaultBuyIn} totalPot={totalPot} onDefaultBuyInChange={setDefaultBuyIn} onAddBuyIn={addBuyIn} onRemoveBuyIn={removeBuyIn} onRemoveFromSession={removeFromSession} onAddToSession={addToSession} onGoToSettlement={() => setTab('settlement')} />}
+          {tab === 'players' && <PlayersTab players={players} sessionPlayers={sessionPlayers} onAddPlayer={addPlayer} onUpdatePlayer={updatePlayer} onRemovePlayer={removePlayer} onAddToSession={addToSession} onUnlinkPlayer={unlinkPlayer} currentUserId={user.id} accountByEmail={accountByEmail} outgoingInviteByEmail={outgoingInviteByEmail} />}
+          {tab === 'session' && <SessionTab players={players} sessionPlayers={sessionPlayers} defaultBuyIn={defaultBuyIn} totalPot={totalPot} autoAddMeToSession={autoAddMeToSession} onToggleAutoAddMe={setAutoAddMeToSession} onDefaultBuyInChange={setDefaultBuyIn} onAddBuyIn={addBuyIn} onRemoveBuyIn={removeBuyIn} onRemoveFromSession={removeFromSession} onAddToSession={addToSession} onGoToSettlement={() => setTab('settlement')} />}
           {tab === 'settlement' && <SettlementTab players={players} sessionPlayers={sessionPlayers} transactions={transactions} settled={settled} totalPot={totalPot} onSetCashOut={setCashOut} onCalculate={handleCalculate} onResetSession={resetSession} onSaveAndFinish={saveAndFinishSession} savingSession={savingSession} saveStatus={saveStatus} />}
           {tab === 'history' && <HistoryTab history={combinedHistory} onUpdateSession={updateSession} onDeleteSession={deleteSession} failedSyncCount={failedCloudSaves.length} failedSessionIds={failedCloudSaves.map(x => x.sessionId)} onRetryFailedSaves={retryFailedSaves} retryingFailedSaves={retryingFailedSaves} />}
-          {tab === 'profile' && <ProfileView user={user} history={combinedHistory} players={players} pendingInvites={pendingInvites} onAcceptInvite={acceptInvite} onRejectInvite={rejectInvite} onUnlinkPlayer={unlinkPlayer} onSignOut={handleSignOut} onRefresh={handleManualRefresh} refreshBusy={manualRefreshBusy} syncMeta={syncMeta} onRetrySyncFailed={retryFailedSaves} retryingFailedSaves={retryingFailedSaves} failedCloudSavesCount={failedCloudSaves.length} />}
+          {tab === 'profile' && <ProfileView user={user} history={combinedHistory} players={players} pendingInvites={pendingInvites} onAcceptInvite={acceptInvite} onRejectInvite={rejectInvite} onUnlinkPlayer={unlinkPlayer} onSignOut={handleSignOut} onRefresh={handleManualRefresh} onRenameSelf={renameSelfEverywhere} refreshBusy={manualRefreshBusy} syncMeta={syncMeta} onRetrySyncFailed={retryFailedSaves} retryingFailedSaves={retryingFailedSaves} failedCloudSavesCount={failedCloudSaves.length} />}
         </main>
 
         <nav className="nav-safe fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-lg bg-green-950/90 backdrop-blur-sm border-t border-green-900 flex z-10" role="navigation" aria-label="Główne zakładki">
