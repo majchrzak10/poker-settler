@@ -685,7 +685,7 @@ function PlayersTab({ players, sessionPlayers, onAddPlayer, onUpdatePlayer, onRe
           const hasAccount = emailNorm ? accountByEmail[emailNorm] : undefined;
           const inviteMeta = emailNorm ? outgoingInviteMetaByEmail[emailNorm] : null;
           const inviteStatus = inviteMeta?.status || null;
-          const statusLabel = p.linked_user_id
+          const statusKey = p.linked_user_id
             ? 'accepted'
             : inviteStatus === 'pending'
               ? 'invited'
@@ -700,24 +700,13 @@ function PlayersTab({ players, sessionPlayers, onAddPlayer, onUpdatePlayer, onRe
                 : hasAccount === true
                   ? 'Konto aktywne'
                   : 'Niezweryfikowany';
-          const statusClass = p.linked_user_id
-            ? 'text-emerald-300 bg-emerald-900/40 border-emerald-700'
-            : inviteStatus === 'pending'
-              ? 'text-yellow-200 bg-yellow-900/30 border-yellow-800'
-              : inviteStatus === 'rejected'
-                ? 'text-rose-200 bg-rose-900/35 border-rose-800'
-                : inviteStatus === 'cancelled'
-                  ? 'text-orange-200 bg-orange-900/35 border-orange-800'
-              : hasAccount === false
-                ? 'text-rose-300 bg-rose-900/30 border-rose-800'
-                : 'text-green-200/80 bg-black/30 border-green-900';
-          const statusTextMap = {
-            invited: 'invited',
-            accepted: 'accepted',
-            rejected: 'rejected',
-            revoked: 'revoked',
+          const statusIconMap = {
+            accepted: '🕊️',
+            invited: '✉️',
+            rejected: '⛔',
+            revoked: '↩',
           };
-          const statusDisplay = statusTextMap[statusLabel] || statusLabel;
+          const statusIcon = statusIconMap[statusKey] || '';
 
           return (
             <div key={p.id} className="bg-black/30 rounded-2xl border border-green-900 px-4 py-3">
@@ -752,12 +741,15 @@ function PlayersTab({ players, sessionPlayers, onAddPlayer, onUpdatePlayer, onRe
               ) : (
                 <div className="space-y-2">
                   <div className="flex items-center gap-3">
-                    <div className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold shrink-0 ${p.linked_user_id ? 'bg-emerald-900/70 text-emerald-300' : 'bg-green-900/70 text-green-200'}`}>
-                      {p.name[0]?.toUpperCase()}
-                    </div>
                     <div className="flex-1 min-w-0">
-                      <p className="font-medium text-white text-sm">{p.name}</p>
-                      <span className={`inline-block text-[10px] border rounded-md px-1.5 py-0.5 mb-1 ${statusClass}`}>{statusDisplay}</span>
+                      <div className="flex items-center gap-2">
+                        <p className="font-semibold text-white text-base leading-tight">{p.name}</p>
+                        {statusIcon && (
+                          <span className="text-sm leading-none" title={statusKey} aria-label={statusKey}>
+                            {statusIcon}
+                          </span>
+                        )}
+                      </div>
                       <p className="text-xs text-green-300/60">{p.phone || 'Brak numeru'}</p>
                       {p.email && <p className="text-[11px] text-green-300/45 truncate">{p.email}</p>}
                     </div>
@@ -769,10 +761,10 @@ function PlayersTab({ players, sessionPlayers, onAddPlayer, onUpdatePlayer, onRe
                     {p.linked_user_id && p.linked_user_id !== currentUserId && (
                       <button
                         onClick={async () => { await onUnlinkPlayer(p.id); }}
-                        className="shrink-0 transition-colors p-1 text-lg leading-none text-emerald-500 hover:text-rose-400"
+                        className="shrink-0 text-xs text-rose-300 border border-rose-900/60 hover:bg-rose-900/25 rounded-lg px-2.5 py-1.5 transition-colors"
                         title="Odepnij konto"
                       >
-                        🔗
+                        Odepnij
                       </button>
                     )}
                     <button onClick={() => enterEdit(p)} className="shrink-0 text-green-700 hover:text-green-300 transition-colors p-1">
