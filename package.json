@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "gen:types": "supabase gen types typescript --linked -o src/types/database.types.ts",
+    "gen:types:project": "supabase gen types typescript --project-id oatfqrijmwdnkztgvzwx -o src/types/database.types.ts"
   },
   "repository": {
     "type": "git",

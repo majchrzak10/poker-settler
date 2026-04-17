@@ -1,34 +1,31 @@
 // @ts-nocheck
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { plnToCents, settleDebts, pluralPL, formatPln } from './lib/settlement';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { plnToCents, settleDebts, formatPln } from './lib/settlement';
 import { supabase } from './lib/supabase';
 import {
   FAILED_CLOUD_SAVES_KEY,
   SYNC_META_KEY,
   ONBOARDING_KEY,
 } from './app/keys';
-import { buildSessionRpcArgs } from './sync/sessionRpc';
+import { persistSessionSaveCloud, persistSessionUpdateCloud } from './sync/persistSession';
 import {
-  isRpcMissingError,
   isFriendLinkRpcMissing,
-  isMissingLiveSessionTableError,
   sanitizeSyncMeta,
   summarizeSyncError,
   formatSyncStamp,
   isSessionPlayerFkError,
 } from './sync/errors';
 import { logClientEvent } from './sync/telemetry';
+import { useCloudSync } from './sync/useCloudSync';
+import { useLiveSessionPush } from './sync/useLiveSessionPush';
 import {
   loadLS,
   saveLS,
   generateId,
   useDebouncedLocalStorage,
-  normalizeDraftSessionPlayers,
   buildDraftHash,
-  isoToMs,
 } from './lib/storage';
 import { getTotalBuyIn, normalizePhoneDigits } from './lib/format';
-import { mapSharedParticipations } from './lib/historyShared';
 import { useAuth } from './auth/useAuth';
 import { LoadingScreen, EmailConfirmedScreen, AuthScreen } from './features/auth/AuthScreens';
 import { PlayersTab } from './features/players/PlayersTab';
@@ -124,260 +121,43 @@ export default function App() {
     defaultBuyInRef.current = defaultBuyIn;
   }, [defaultBuyIn]);
 
-  useEffect(() => {
-    lastMergedLiveUpdatedAtRef.current = null;
-    setSkipLiveSessionCloud(false);
-  }, [user?.id]);
+  const { refreshCloudData } = useCloudSync({
+    user,
+    players,
+    skipLiveSessionCloud,
+    setSkipLiveSessionCloud,
+    syncChannelNonce,
+    setSyncChannelNonce,
+    setSyncMeta,
+    setPlayers,
+    setHistory,
+    setSharedHistory,
+    setPendingInvites,
+    setOutgoingInvites,
+    setOutgoingInviteMetaByEmail,
+    setAccountByEmail,
+    setDefaultBuyIn,
+    setSessionPlayers,
+    sessionPlayersRef,
+    defaultBuyInRef,
+    lastDraftHashRef,
+    lastMergedLiveUpdatedAtRef,
+    applyingRemoteSessionRef,
+    notifyCloudFailure,
+  });
 
-  const refreshCloudData = useCallback(async () => {
-    if (!user) return;
-    const [playersRes, sessionsRes, sharedRes, invitesRes] = await Promise.all([
-      supabase.from('players').select('*').eq('owner_id', user.id).order('created_at'),
-      supabase.from('sessions').select('id, played_at, total_pot, session_players(player_id, player_name, total_buy_in, cash_out, net_balance), transfers(from_name, to_name, amount)').eq('owner_id', user.id).order('played_at'),
-      supabase.from('participations').select('*').eq('user_id', user.id).order('session_date'),
-      supabase.from('friend_invites').select('id, requester_user_id, requester_player_id, invitee_email, invitee_user_id, status, created_at, responded_at').order('created_at', { ascending: false }).limit(400),
-    ]);
-    let liveRes = { data: null, error: null };
-    if (!skipLiveSessionCloud) {
-      liveRes = await supabase.from('live_session_state').select('default_buy_in, session_players, updated_at').eq('owner_id', user.id).maybeSingle();
-      if (liveRes.error) {
-        if (isMissingLiveSessionTableError(liveRes.error)) {
-          setSkipLiveSessionCloud(true);
-          setSyncMeta(prev => ({ ...prev, lastError: null }));
-          liveRes = { data: null, error: null };
-        } else {
-          console.warn('refreshCloudData live_session_state', liveRes.error);
-        }
-      }
-    }
-    if (playersRes.error || sessionsRes.error) {
-      console.warn('refreshCloudData players/sessions', playersRes.error, sessionsRes.error);
-      try {
-        void logClientEvent('error', 'refresh_cloud_failed', {
-          players_error: playersRes.error?.message || null,
-          players_code: playersRes.error?.code || null,
-          sessions_error: sessionsRes.error?.message || null,
-          sessions_code: sessionsRes.error?.code || null
-        });
-      } catch (_) {}
-      return;
-    }
-    setSyncMeta(prev => (prev.lastError ? { ...prev, lastError: null } : prev));
-    if (sharedRes.error) console.warn('refreshCloudData participations', sharedRes.error);
-    if (invitesRes.error) console.warn('refreshCloudData friend_invites', invitesRes.error);
-
-    const pData = playersRes.data;
-    const sData = sessionsRes.data;
-    const sharedData = sharedRes.data;
-    const invitesData = invitesRes.data;
-    const liveDraft = liveRes.error ? null : liveRes.data;
-
-    const cloudPlayers = (pData || []).map(p => ({ id: p.id, name: p.name, phone: p.phone || '', email: p.email || '', linked_user_id: p.linked_user_id || null }));
-    setPlayers(prev => {
-      const seen = new Set(cloudPlayers.map(p => p.id));
-      const extras = prev.filter(p => !seen.has(p.id));
-      return extras.length ? [...cloudPlayers, ...extras] : cloudPlayers;
-    });
-
-    const mapSessionRow = s => ({
-      id: s.id, date: s.played_at, totalPot: s.total_pot / 100,
-      players: (s.session_players || []).map(sp => ({ id: sp.player_id || generateId(), name: sp.player_name, phone: '', totalBuyIn: sp.total_buy_in / 100, cashOut: sp.cash_out != null ? sp.cash_out / 100 : 0, netBalance: sp.net_balance != null ? sp.net_balance / 100 : 0 })),
-      transfers: (s.transfers || []).map(t => ({ from: t.from_name, to: t.to_name, amount: t.amount / 100 })),
-    });
-    const cloudHistory = (sData || []).map(mapSessionRow);
-    setHistory(prev => {
-      const ids = new Set(cloudHistory.map(s => s.id));
-      const localOnly = prev.filter(s => !ids.has(s.id) && !String(s.id).startsWith('shared:'));
-      if (localOnly.length === 0) return cloudHistory;
-      return [...cloudHistory, ...localOnly].sort((a, b) => new Date(a.date) - new Date(b.date));
-    });
-
-    if (!sharedRes.error) setSharedHistory(mapSharedParticipations(sharedData || []));
-    if (!invitesRes.error) {
-      const myEmail = (user.email || '').trim().toLowerCase();
-      const incoming = (invitesData || []).filter(inv =>
-        inv.status === 'pending' &&
-        inv.requester_user_id !== user.id && (
-          inv.invitee_user_id === user.id ||
-          (inv.invitee_email || '').trim().toLowerCase() === myEmail
-        )
-      );
-      setPendingInvites(incoming);
-      const outgoing = (invitesData || []).filter(inv => inv.requester_user_id === user.id && inv.status !== 'accepted');
-      setOutgoingInvites(outgoing);
-      const outgoingMap = {};
-      for (const inv of outgoing) {
-        const emailKey = normalizeEmail(inv.invitee_email);
-        if (!emailKey) continue;
-        const prev = outgoingMap[emailKey];
-        if (!prev || new Date(inv.created_at).getTime() > new Date(prev.created_at).getTime()) {
-          outgoingMap[emailKey] = {
-            id: inv.id,
-            status: inv.status,
-            created_at: inv.created_at,
-            responded_at: inv.responded_at || null,
-          };
-        }
-      }
-      setOutgoingInviteMetaByEmail(outgoingMap);
-    }
-    const playerEmails = [...new Set((cloudPlayers || []).map(p => normalizeEmail(p.email)).filter(Boolean))];
-    if (playerEmails.length === 0) {
-      setAccountByEmail({});
-    } else {
-      const { data: profileRows } = await supabase.from('profiles').select('email').in('email', playerEmails);
-      const existing = new Set((profileRows || []).map(r => normalizeEmail(r.email)));
-      const map = {};
-      for (const email of playerEmails) map[email] = existing.has(email);
-      setAccountByEmail(map);
-    }
-
-    if (liveDraft && !liveRes.error) {
-      const remoteTs = liveDraft.updated_at;
-      const lastPushMeta = loadLS(`poker_live_push_${user.id}`, null);
-      const lastLocalPushAt = lastPushMeta?.updated_at;
-      const remoteIsNewerThanOurPush = !lastLocalPushAt || isoToMs(remoteTs) > isoToMs(lastLocalPushAt);
-      const mergedRef = lastMergedLiveUpdatedAtRef.current;
-      const remoteNewerThanLastMerge = !mergedRef || isoToMs(remoteTs) > isoToMs(mergedRef);
-
-      if (remoteIsNewerThanOurPush && remoteNewerThanLastMerge) {
-        const remoteDefaultBuyIn = Number(liveDraft.default_buy_in) || 50;
-        const remoteSessionPlayers = normalizeDraftSessionPlayers(liveDraft.session_players);
-        const localNorm = normalizeDraftSessionPlayers(sessionPlayersRef.current);
-        if (!lastLocalPushAt && localNorm.length > 0 && remoteSessionPlayers.length === 0) {
-          lastMergedLiveUpdatedAtRef.current = remoteTs;
-          lastDraftHashRef.current = buildDraftHash(defaultBuyInRef.current, sessionPlayersRef.current);
-          saveLS(`poker_live_push_${user.id}`, { updated_at: remoteTs });
-        } else {
-          const remoteHash = buildDraftHash(remoteDefaultBuyIn, remoteSessionPlayers);
-          applyingRemoteSessionRef.current = true;
-          lastMergedLiveUpdatedAtRef.current = remoteTs;
-          lastDraftHashRef.current = remoteHash;
-          saveLS(`poker_live_push_${user.id}`, { updated_at: remoteTs });
-          setDefaultBuyIn(remoteDefaultBuyIn);
-          setSessionPlayers(remoteSessionPlayers);
-        }
-      }
-    }
-  }, [user?.id, skipLiveSessionCloud]);
-
-  useEffect(() => {
-    if (!user || !skipLiveSessionCloud) return;
-    const probe = async () => {
-      const { error } = await supabase.from('live_session_state').select('owner_id').eq('owner_id', user.id).limit(1).maybeSingle();
-      if (!error) setSkipLiveSessionCloud(false);
-    };
-    const soon = setTimeout(probe, 4000);
-    const id = setInterval(probe, 90000);
-    return () => { clearTimeout(soon); clearInterval(id); };
-  }, [user?.id, skipLiveSessionCloud]);
-
-  useEffect(() => {
-    refreshCloudData();
-  }, [refreshCloudData]);
-
-  useEffect(() => {
-    if (!user) return;
-    const ensureSelfPlayer = async () => {
-      const { error: rpcErr } = await supabase.rpc('sync_self_player');
-      if (rpcErr) {
-        const isMissing = rpcErr.code === 'PGRST202' || rpcErr.code === '42883';
-        if (!isMissing) {
-          notifyCloudFailure(rpcErr.message);
-        } else {
-          const existing = players.find(p => p.linked_user_id === user.id);
-          if (!existing) {
-            const fallbackName = user.email?.split('@')[0] || 'Ja';
-            await supabase.from('players').insert({
-              id: generateId(),
-              owner_id: user.id,
-              linked_user_id: user.id,
-              name: fallbackName,
-              email: (user.email || '').toLowerCase() || null,
-            });
-          }
-        }
-      }
-      void refreshCloudData();
-    };
-    void ensureSelfPlayer();
-  }, [user?.id]);
-
-  useEffect(() => {
-    if (!user) return;
-    let timer = null;
-    let inFlight = false;
-    let reconnectTimer = null;
-    let reconnectScheduled = false;
-    const scheduleRefresh = () => {
-      clearTimeout(timer);
-      timer = setTimeout(async () => {
-        if (inFlight) return;
-        inFlight = true;
-        try {
-          await refreshCloudData();
-        } finally {
-          inFlight = false;
-        }
-      }, 300);
-    };
-    const scheduleReconnect = reason => {
-      if (reconnectScheduled) return;
-      reconnectScheduled = true;
-      reconnectTimer = setTimeout(() => {
-        reconnectScheduled = false;
-        setSyncChannelNonce(n => n + 1);
-      }, 1200);
-      if (reason) {
-        try { console.warn('sync channel reconnect scheduled:', reason); } catch (_) {}
-        try { void logClientEvent('warn', 'realtime_reconnect', { reason: String(reason) }); } catch (_) {}
-      }
-    };
-    let channel = supabase.channel(`sync-${user.id}-${syncChannelNonce}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'players', filter: `owner_id=eq.${user.id}` }, scheduleRefresh)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'sessions', filter: `owner_id=eq.${user.id}` }, scheduleRefresh);
-    if (!skipLiveSessionCloud) {
-      channel = channel.on('postgres_changes', { event: '*', schema: 'public', table: 'live_session_state', filter: `owner_id=eq.${user.id}` }, scheduleRefresh);
-    }
-    channel = channel
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'participations', filter: `user_id=eq.${user.id}` }, scheduleRefresh)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'friend_invites' }, scheduleRefresh)
-      .subscribe(status => {
-        if (status === 'SUBSCRIBED') {
-          scheduleRefresh();
-          return;
-        }
-        if (status === 'CHANNEL_ERROR' || status === 'CLOSED' || status === 'TIMED_OUT') {
-          scheduleReconnect(status);
-        }
-      });
-
-    const poll = setInterval(() => {
-      if (!document.hidden) scheduleRefresh();
-    }, 6000);
-
-    const onFocus = () => scheduleRefresh();
-    const onOnline = () => scheduleRefresh();
-    const onVisibility = () => {
-      if (!document.hidden) scheduleRefresh();
-    };
-    const onPageShow = () => scheduleRefresh();
-    window.addEventListener('focus', onFocus);
-    window.addEventListener('online', onOnline);
-    window.addEventListener('pageshow', onPageShow);
-    document.addEventListener('visibilitychange', onVisibility);
-
-    return () => {
-      clearTimeout(timer);
-      clearTimeout(reconnectTimer);
-      clearInterval(poll);
-      window.removeEventListener('focus', onFocus);
-      window.removeEventListener('online', onOnline);
-      window.removeEventListener('pageshow', onPageShow);
-      document.removeEventListener('visibilitychange', onVisibility);
-      supabase.removeChannel(channel);
-    };
-  }, [user?.id, refreshCloudData, skipLiveSessionCloud, syncChannelNonce]);
+  useLiveSessionPush({
+    user,
+    skipLiveSessionCloud,
+    defaultBuyIn,
+    sessionPlayers,
+    applyingRemoteSessionRef,
+    lastDraftHashRef,
+    lastMergedLiveUpdatedAtRef,
+    setSkipLiveSessionCloud,
+    setSyncMeta,
+    recordSyncError,
+  });
 
   useEffect(() => {
     if (!user || !autoAddMeToSession) return;
@@ -405,103 +185,6 @@ export default function App() {
     setFailedCloudSaves(prev => prev.filter(p => p.sessionId !== sessionId));
   };
 
-  const insertRows = async (table, rows) => {
-    if (!rows || rows.length === 0) return;
-    const { error } = await supabase.from(table).insert(rows);
-    if (error && error.code !== '23505') throw error;
-  };
-
-  const createMissingSessionPlayersError = message => {
-    const err = new Error(message || 'Nie znaleziono części graczy użytych w sesji.');
-    err.code = 'MISSING_SESSION_PLAYERS';
-    return err;
-  };
-
-  const repairSessionPlayersRows = async (sessionPlayersRows = []) => {
-    if (!user || !sessionPlayersRows.length) return sessionPlayersRows;
-    const ids = [...new Set(sessionPlayersRows.map(r => r.player_id).filter(Boolean))];
-    if (!ids.length) return sessionPlayersRows;
-    const { data: existingRows, error: existingErr } = await supabase
-      .from('players')
-      .select('id')
-      .eq('owner_id', user.id)
-      .in('id', ids);
-    if (existingErr) throw existingErr;
-    const existing = new Set((existingRows || []).map(r => r.id));
-    const missing = sessionPlayersRows.filter(r => !existing.has(r.player_id));
-    if (missing.length === 0) return sessionPlayersRows;
-
-    const { data: allPlayers, error: allErr } = await supabase
-      .from('players')
-      .select('id,name')
-      .eq('owner_id', user.id);
-    if (allErr) throw allErr;
-    const byName = new Map();
-    for (const p of (allPlayers || [])) {
-      const key = (p.name || '').trim().toLowerCase();
-      if (!key) continue;
-      if (!byName.has(key)) byName.set(key, []);
-      byName.get(key).push(p.id);
-    }
-    const patched = sessionPlayersRows.map(r => ({ ...r }));
-    const usedIds = new Set(patched.filter(r => existing.has(r.player_id)).map(r => r.player_id));
-    let repaired = 0;
-    for (const row of patched) {
-      if (existing.has(row.player_id)) continue;
-      const key = (row.player_name || '').trim().toLowerCase();
-      const candidates = (byName.get(key) || []).filter(id => !usedIds.has(id));
-      if (candidates.length !== 1) {
-        throw createMissingSessionPlayersError(
-          'Nie znaleziono części graczy użytych w tej sesji. Otwórz sesję ponownie i wybierz graczy z aktualnej listy.'
-        );
-      }
-      row.player_id = candidates[0];
-      usedIds.add(candidates[0]);
-      repaired++;
-    }
-    if (repaired > 0) {
-      setCloudBanner(`Naprawiono ${repaired} ${pluralPL(repaired, 'powiązanie gracza', 'powiązania graczy', 'powiązań graczy')} przed zapisem do chmury.`);
-    }
-    return patched;
-  };
-
-  const persistSessionInsertsSequential = async (sessionRow, sessionPlayersRows, transferRows, participationRows) => {
-    const { error: sessionErr } = await supabase.from('sessions').insert(sessionRow);
-    if (sessionErr) throw sessionErr;
-    await insertRows('session_players', sessionPlayersRows);
-    await insertRows('transfers', transferRows);
-    await insertRows('participations', participationRows);
-  };
-
-  const persistSessionSaveCloud = async (sessionRow, sessionPlayersRows, transferRows, participationRows) => {
-    const repairedSessionPlayersRows = await repairSessionPlayersRows(sessionPlayersRows);
-    const args = buildSessionRpcArgs(sessionRow, repairedSessionPlayersRows, transferRows, participationRows);
-    const { error } = await supabase.rpc('save_session_atomic', args);
-    if (!error) return repairedSessionPlayersRows;
-    if (!isRpcMissingError(error)) throw error;
-    await persistSessionInsertsSequential(sessionRow, repairedSessionPlayersRows, transferRows, participationRows);
-    return repairedSessionPlayersRows;
-  };
-
-  const persistSessionUpdateCloud = async (sessionRow, sessionPlayersRows, transferRows, participationRows) => {
-    const repairedSessionPlayersRows = await repairSessionPlayersRows(sessionPlayersRows);
-    const args = buildSessionRpcArgs(sessionRow, repairedSessionPlayersRows, transferRows, participationRows);
-    const { error } = await supabase.rpc('update_session_atomic', args);
-    if (!error) return;
-    if (!isRpcMissingError(error)) throw error;
-    const { error: uErr } = await supabase.from('sessions').update({ played_at: sessionRow.played_at, total_pot: sessionRow.total_pot }).eq('id', sessionRow.id).eq('owner_id', sessionRow.owner_id);
-    if (uErr) throw uErr;
-    const { error: d1 } = await supabase.from('session_players').delete().eq('session_id', sessionRow.id);
-    if (d1) throw d1;
-    const { error: d2 } = await supabase.from('transfers').delete().eq('session_id', sessionRow.id);
-    if (d2) throw d2;
-    const { error: d3 } = await supabase.from('participations').delete().eq('session_id', sessionRow.id);
-    if (d3) throw d3;
-    await insertRows('session_players', repairedSessionPlayersRows);
-    await insertRows('transfers', transferRows);
-    await insertRows('participations', participationRows);
-  };
-
   const retryFailedSaves = async () => {
     if (!user || failedCloudSaves.length === 0 || retryingFailedSaves) return;
     setRetryingFailedSaves(true);
@@ -511,7 +194,7 @@ export default function App() {
     let lastErr = null;
     for (const item of failedCloudSaves) {
       try {
-        await persistSessionSaveCloud(item.sessionRow, item.sessionPlayersRows, item.transferRows, item.participationRows);
+        await persistSessionSaveCloud(item.sessionRow, item.sessionPlayersRows, item.transferRows, item.participationRows, setCloudBanner);
         removeFailedCloudSave(item.sessionId);
         success++;
       } catch (e) {
@@ -542,39 +225,6 @@ export default function App() {
     }, 1200);
     return () => clearTimeout(timer);
   }, [user?.id, failedCloudSaves.length]);
-
-  useEffect(() => {
-    if (!user || skipLiveSessionCloud) return;
-    if (applyingRemoteSessionRef.current) {
-      applyingRemoteSessionRef.current = false;
-      return;
-    }
-    const draftHash = buildDraftHash(defaultBuyIn, sessionPlayers);
-    if (draftHash === lastDraftHashRef.current) return;
-    const timer = setTimeout(async () => {
-      const payload = {
-        owner_id: user.id,
-        default_buy_in: Number(defaultBuyIn) || 50,
-        session_players: normalizeDraftSessionPlayers(sessionPlayers),
-        updated_at: new Date().toISOString(),
-      };
-      const { error } = await supabase.from('live_session_state').upsert(payload, { onConflict: 'owner_id' });
-      if (error) {
-        if (isMissingLiveSessionTableError(error)) {
-          setSkipLiveSessionCloud(true);
-          setSyncMeta(prev => ({ ...prev, lastError: null }));
-          console.warn('Supabase: brak tabeli live_session_state. W Dashboard → SQL uruchom plik supabase/migrations/002_live_session_state.sql');
-        } else {
-          recordSyncError(error.message || 'Błąd synchronizacji aktywnej sesji');
-        }
-      } else {
-        lastDraftHashRef.current = draftHash;
-        lastMergedLiveUpdatedAtRef.current = payload.updated_at;
-        saveLS(`poker_live_push_${user.id}`, { updated_at: payload.updated_at });
-      }
-    }, 350);
-    return () => clearTimeout(timer);
-  }, [user?.id, defaultBuyIn, sessionPlayers, skipLiveSessionCloud]);
 
   const playerById = useMemo(
     () => Object.fromEntries(players.map(p => [p.id, p])),
@@ -788,7 +438,7 @@ export default function App() {
     if (user) {
       recordSyncAttempt();
       try {
-        await persistSessionSaveCloud(sessionRow, sessionPlayersRows, transferRows, participationRows);
+        await persistSessionSaveCloud(sessionRow, sessionPlayersRows, transferRows, participationRows, setCloudBanner);
         removeFailedCloudSave(sessionId);
         void refreshCloudData();
         recordSyncSuccess();
@@ -860,7 +510,7 @@ export default function App() {
           });
         }
       }
-      await persistSessionUpdateCloud(sessionRow, sessionPlayersRows, transferRows, participationRows);
+      await persistSessionUpdateCloud(sessionRow, sessionPlayersRows, transferRows, participationRows, setCloudBanner);
       void refreshCloudData();
       recordSyncSuccess();
       return null;

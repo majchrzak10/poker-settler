@@ -14,7 +14,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 index.html              ← Vite HTML shell (root)
 src/
 ├── main.tsx            ← createRoot, PWA, initClientTelemetry, StrictMode
-├── App.tsx             ← stan globalny, sync Supabase, routing zakładek
+├── App.tsx             ← stan globalny, routing zakładek; sync przez hooki w `sync/`
 ├── config.ts           ← Supabase URL + anon key
 ├── index.css / pwa.ts
 ├── app/                ← keys.ts, navigation.tsx (TABS / SCREEN_META)
@@ -27,14 +27,14 @@ src/
 │   ├── history/HistoryTab.tsx + historyUtils.tsx
 │   └── profile/ProfileView.tsx
 ├── lib/                ← supabase.ts, settlement.ts, storage, format, historyShared
-├── sync/               ← telemetry, errors, sessionRpc (helpers pod zapis sesji)
+├── sync/               ← `useCloudSync` (refresh + Realtime + merge live draft), `useLiveSessionPush` (debounced `live_session_state`), `persistSession` (RPC / fallback zapisu sesji), `sessionRpc`, `errors`, `telemetry`
 └── ui/icons.tsx        ← ikony SVG
 ```
 
 - **Build:** `npm run build` → `dist/` (Netlify publish directory).
 - **Dev:** `npm run dev` (Vite HMR).
 - **Styling:** Tailwind via PostCSS (`tailwind.config.js`).
-- **Backend:** Supabase (`@supabase/supabase-js`); client created once in `App.tsx` (re-export `supabase`).
+- **Backend:** Supabase (`@supabase/supabase-js`); jeden klient w `src/lib/supabase.ts` (`export const supabase`).
 
 ## State & Storage
 
@@ -61,6 +61,14 @@ npm install          # pierwszy raz
 npm run dev          # http://localhost:5173
 npm run build        # dist/
 npm test             # Vitest — settlement
+```
+
+**Typy Supabase (`Database`):** `src/types/database.types.ts` jest importowany w `src/lib/supabase.ts` jako `createClient<Database>(...)`. Domyślnie `Database` to placeholder (`any`), żeby nie psuć inferencji przed pierwszym generowaniem. Pełny schemat:
+
+```bash
+supabase login && supabase link   # powiązanie z projektem
+npm run gen:types                 # nadpisuje src/types/database.types.ts
+# alternatywnie (token w CI): npm run gen:types:project + SUPABASE_ACCESS_TOKEN
 ```
 
 `App.tsx` is still marked `// @ts-nocheck` until types are tightened incrementally.
