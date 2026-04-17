@@ -142,6 +142,24 @@ function sanitizeSyncMeta(meta) {
   return meta;
 }
 
+function summarizeSyncError(errMsg) {
+  const msg = (errMsg || '').toLowerCase();
+  if (!msg) return 'Błąd synchronizacji.';
+  if (msg.includes('network') || msg.includes('failed to fetch')) return 'Brak połączenia z internetem. Sprawdź sieć i spróbuj ponownie.';
+  if (msg.includes('jwt') || msg.includes('auth') || msg.includes('token')) return 'Sesja wygasła lub jest nieprawidłowa. Zaloguj się ponownie.';
+  if (msg.includes('permission') || msg.includes('rls') || msg.includes('policy')) return 'Brak uprawnień do tej operacji.';
+  if (msg.includes('timeout')) return 'Serwer odpowiada zbyt długo. Spróbuj ponownie za chwilę.';
+  if (msg.includes('does not exist') || msg.includes('schema cache') || msg.includes('pgrst')) return 'Brakuje migracji w bazie danych. Uruchom najnowsze skrypty SQL.';
+  return 'Wystąpił problem z synchronizacją danych.';
+}
+
+function formatSyncStamp(isoString) {
+  if (!isoString) return 'brak';
+  const dt = new Date(isoString);
+  if (Number.isNaN(dt.getTime())) return 'brak';
+  return dt.toLocaleString('pl-PL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+
 const { useState, useEffect } = React;
 
 function useAuth() {
@@ -582,7 +600,7 @@ function AuthScreen() {
 
 // ─── PlayersTab ───────────────────────────────────────────────────────────────
 
-function PlayersTab({ players, sessionPlayers, onAddPlayer, onUpdatePlayer, onRemovePlayer, onAddToSession, onUnlinkPlayer, currentUserId, accountByEmail, outgoingInviteByEmail }) {
+function PlayersTab({ players, sessionPlayers, onAddPlayer, onUpdatePlayer, onRemovePlayer, onAddToSession, onUnlinkPlayer, currentUserId, accountByEmail, outgoingInviteMetaByEmail }) {
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
@@ -656,11 +674,18 @@ function PlayersTab({ players, sessionPlayers, onAddPlayer, onUpdatePlayer, onRe
           const isEditing = editingId === p.id;
           const emailNorm = (p.email || '').trim().toLowerCase();
           const hasAccount = emailNorm ? accountByEmail[emailNorm] : undefined;
-          const hasOutgoingInvite = !!(emailNorm && outgoingInviteByEmail[emailNorm]);
+          const inviteMeta = emailNorm ? outgoingInviteMetaByEmail[emailNorm] : null;
+          const inviteStatus = inviteMeta?.status || null;
           const statusLabel = p.linked_user_id
-            ? 'Połączony'
-            : hasOutgoingInvite
-              ? 'Zaproszenie wysłane'
+            ? 'accepted'
+            : inviteStatus === 'pending'
+              ? 'invited'
+              : inviteStatus === 'rejected'
+                ? 'rejected'
+                : inviteStatus === 'cancelled'
+                  ? 'revoked'
+                  : inviteStatus === 'accepted'
+                    ? 'accepted'
               : hasAccount === false
                 ? 'Brak konta'
                 : hasAccount === true
@@ -668,11 +693,22 @@ function PlayersTab({ players, sessionPlayers, onAddPlayer, onUpdatePlayer, onRe
                   : 'Niezweryfikowany';
           const statusClass = p.linked_user_id
             ? 'text-emerald-300 bg-emerald-900/40 border-emerald-700'
-            : hasOutgoingInvite
+            : inviteStatus === 'pending'
               ? 'text-yellow-200 bg-yellow-900/30 border-yellow-800'
+              : inviteStatus === 'rejected'
+                ? 'text-rose-200 bg-rose-900/35 border-rose-800'
+                : inviteStatus === 'cancelled'
+                  ? 'text-orange-200 bg-orange-900/35 border-orange-800'
               : hasAccount === false
                 ? 'text-rose-300 bg-rose-900/30 border-rose-800'
                 : 'text-green-200/80 bg-black/30 border-green-900';
+          const statusTextMap = {
+            invited: 'invited',
+            accepted: 'accepted',
+            rejected: 'rejected',
+            revoked: 'revoked',
+          };
+          const statusDisplay = statusTextMap[statusLabel] || statusLabel;
 
           return (
             <div key={p.id} className="bg-black/30 rounded-2xl border border-green-900 px-4 py-3">
@@ -712,7 +748,7 @@ function PlayersTab({ players, sessionPlayers, onAddPlayer, onUpdatePlayer, onRe
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="font-medium text-white text-sm">{p.name}</p>
-                      <span className={`inline-block text-[10px] border rounded-md px-1.5 py-0.5 mb-1 ${statusClass}`}>{statusLabel}</span>
+                      <span className={`inline-block text-[10px] border rounded-md px-1.5 py-0.5 mb-1 ${statusClass}`}>{statusDisplay}</span>
                       <p className="text-xs text-green-300/60">{p.phone || 'Brak numeru'}</p>
                       {p.email && <p className="text-[11px] text-green-300/45 truncate">{p.email}</p>}
                     </div>
@@ -1442,7 +1478,7 @@ function HistoryTab({ history, onUpdateSession, onDeleteSession, failedSyncCount
 
 // ─── ProfileView ──────────────────────────────────────────────────────────────
 
-function ProfileView({ user, history, players, pendingInvites, onAcceptInvite, onRejectInvite, onUnlinkPlayer, onSignOut, onRefresh, onRenameSelf, refreshBusy, syncMeta, onRetrySyncFailed, retryingFailedSaves, failedCloudSavesCount }) {
+function ProfileView({ user, history, players, pendingInvites, outgoingInvites, onAcceptInvite, onRejectInvite, onCancelInvite, onUnlinkPlayer, onSignOut, onRefresh, onRenameSelf, refreshBusy, syncMeta, onRetrySyncFailed, retryingFailedSaves, failedCloudSavesCount }) {
   const [profile, setProfile] = useState(null);
   const [editingName, setEditingName] = useState(false);
   const [draftName, setDraftName] = useState('');
@@ -1461,6 +1497,8 @@ function ProfileView({ user, history, players, pendingInvites, onAcceptInvite, o
   const [emailSaveError, setEmailSaveError] = useState('');
   const [inviteBusyId, setInviteBusyId] = useState(null);
   const [inviteMsg, setInviteMsg] = useState('');
+  const [showSyncDetails, setShowSyncDetails] = useState(false);
+  const [isOnline, setIsOnline] = useState(() => (typeof navigator !== 'undefined' ? navigator.onLine : true));
 
   useEffect(() => {
     supabase.from('profiles').select('*').eq('id', user.id).single().then(({ data }) => {
@@ -1601,6 +1639,17 @@ function ProfileView({ user, history, players, pendingInvites, onAcceptInvite, o
     });
   }, [friends]);
 
+  useEffect(() => {
+    const onOnline = () => setIsOnline(true);
+    const onOffline = () => setIsOnline(false);
+    window.addEventListener('online', onOnline);
+    window.addEventListener('offline', onOffline);
+    return () => {
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('offline', onOffline);
+    };
+  }, []);
+
   return (
     <div className="p-4 space-y-5 pb-6">
       <div className="px-1">
@@ -1617,6 +1666,17 @@ function ProfileView({ user, history, players, pendingInvites, onAcceptInvite, o
           </button>
         </div>
         <p className="text-xs text-green-200/55 mt-0.5">Konto i synchronizacja</p>
+        <div className="mt-2 flex flex-wrap gap-2">
+          <span className={`text-[11px] px-2 py-1 rounded-lg border ${isOnline ? 'text-emerald-300 border-emerald-800 bg-emerald-900/20' : 'text-rose-300 border-rose-800 bg-rose-900/20'}`}>
+            {isOnline ? 'online' : 'offline'}
+          </span>
+          <span className="text-[11px] px-2 py-1 rounded-lg border border-green-900 text-green-200/70 bg-black/25">
+            Ostatni sync: {formatSyncStamp(syncMeta?.lastSuccess)}
+          </span>
+          <span className="text-[11px] px-2 py-1 rounded-lg border border-green-900 text-green-200/60 bg-black/20">
+            Ostatnia próba: {formatSyncStamp(syncMeta?.lastAttempt)}
+          </span>
+        </div>
       </div>
       <div className="bg-black/30 border border-green-900 rounded-2xl p-4 space-y-3">
         <div className="flex items-center gap-4">
@@ -1703,13 +1763,25 @@ function ProfileView({ user, history, players, pendingInvites, onAcceptInvite, o
             {nameSaveError && <p className="text-xs text-rose-400 px-1">{nameSaveError}</p>}
           </div>
         )}
-        {syncMeta?.lastError && <p className="text-xs text-rose-400">{syncMeta.lastError}</p>}
+        {syncMeta?.lastError && (
+          <div className="space-y-1">
+            <p className="text-xs text-rose-300">{summarizeSyncError(syncMeta.lastError)}</p>
+            <button
+              type="button"
+              onClick={() => setShowSyncDetails(v => !v)}
+              className="text-[11px] text-green-300/70 hover:text-green-200 underline"
+            >
+              {showSyncDetails ? 'Ukryj szczegóły' : 'Pokaż szczegóły'}
+            </button>
+            {showSyncDetails && <p className="text-[11px] text-rose-300/85 break-words">{syncMeta.lastError}</p>}
+          </div>
+        )}
       </div>
 
       {(syncMeta?.lastError || failedCloudSavesCount > 0) && (
         <div className="bg-amber-950/35 border border-amber-800/45 rounded-2xl p-4 space-y-2">
           <p className="text-xs font-semibold text-amber-200/90">Uwaga — synchronizacja sesji</p>
-          {syncMeta?.lastError && <p className="text-xs text-rose-300/95 break-words">{syncMeta.lastError}</p>}
+          {syncMeta?.lastError && <p className="text-xs text-rose-300/95 break-words">{summarizeSyncError(syncMeta.lastError)}</p>}
           {failedCloudSavesCount > 0 && (
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <p className="text-xs text-amber-100/85">{failedCloudSavesCount} {pluralPL(failedCloudSavesCount, 'sesja nie doszła do chmury', 'sesje nie doszły do chmury', 'sesji nie doszło do chmury')}.</p>
@@ -1767,12 +1839,50 @@ function ProfileView({ user, history, players, pendingInvites, onAcceptInvite, o
         {inviteMsg && <p className={`text-xs ${inviteMsg.includes('zaakceptowane') ? 'text-emerald-400' : inviteMsg.includes('odrzucone') ? 'text-green-300/70' : 'text-rose-400'}`}>{inviteMsg}</p>}
       </div>
 
+      <div className="bg-black/30 border border-green-900 rounded-2xl p-4 space-y-3">
+        <div>
+          <h3 className="text-sm font-semibold text-white">Wysłane zaproszenia</h3>
+          <p className="text-xs text-green-200/50 mt-0.5">Statusy relacji: invited / accepted / rejected / revoked.</p>
+        </div>
+        {(outgoingInvites || []).length === 0 ? (
+          <p className="text-xs text-green-200/45">Brak wysłanych zaproszeń.</p>
+        ) : (outgoingInvites || []).map(invite => (
+          <div key={invite.id} className="rounded-xl border border-green-900/80 bg-black/25 p-3 space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-sm text-white truncate">{invite.invitee_email}</p>
+              <span className="text-[10px] border rounded-md px-1.5 py-0.5 text-green-200/80 border-green-800 bg-black/30">
+                {invite.status}
+              </span>
+            </div>
+            <p className="text-xs text-green-200/45">
+              Wysłane: {formatDate(invite.created_at)}
+              {invite.responded_at ? ` · Odpowiedź: ${formatDate(invite.responded_at)}` : ''}
+            </p>
+            {invite.status === 'pending' && (
+              <button
+                onClick={async () => {
+                  setInviteBusyId(invite.id);
+                  setInviteMsg('');
+                  const err = await onCancelInvite(invite.id);
+                  setInviteBusyId(null);
+                  setInviteMsg(err ? err : 'Zaproszenie cofnięte.');
+                }}
+                disabled={inviteBusyId === invite.id}
+                className="text-xs bg-orange-900/45 hover:bg-orange-800 border border-orange-800 text-orange-200 rounded-xl px-3 py-2 transition-colors"
+              >
+                {inviteBusyId === invite.id ? '...' : 'Cofnij zaproszenie'}
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+
       <div>
         <h2 className="text-sm font-semibold uppercase tracking-wider text-green-200/60 mb-3">Znajomi ({friends.length})</h2>
         {friends.length === 0 ? (
           <div className="text-center py-10 bg-black/20 rounded-2xl border border-dashed border-green-900">
             <p className="text-green-200/50 text-sm">Brak połączonych znajomych.</p>
-            <p className="text-green-200/30 text-xs mt-1">Połącz gracza przez email lub telefon w zakładce Gracze.</p>
+            <p className="text-green-200/30 text-xs mt-1">Dodaj gracza z emailem i wyślij zaproszenie w zakładce Gracze.</p>
           </div>
         ) : friends.map(friend => {
           const profileInfo = linkedProfileMap[friend.linked_user_id];
@@ -1879,7 +1989,8 @@ function App() {
   const [history, setHistory] = useState(() => loadLS('poker_sessions_history', []));
   const [sharedHistory, setSharedHistory] = useState([]);
   const [pendingInvites, setPendingInvites] = useState([]);
-  const [outgoingInviteByEmail, setOutgoingInviteByEmail] = useState({});
+  const [outgoingInvites, setOutgoingInvites] = useState([]);
+  const [outgoingInviteMetaByEmail, setOutgoingInviteMetaByEmail] = useState({});
   const [accountByEmail, setAccountByEmail] = useState({});
   const [autoAddMeToSession, setAutoAddMeToSession] = useState(() => loadLS('poker_auto_add_me', true));
   const [savingSession, setSavingSession] = useState(false);
@@ -1963,7 +2074,7 @@ function App() {
       supabase.from('players').select('*').eq('owner_id', user.id).order('created_at'),
       supabase.from('sessions').select('id, played_at, total_pot, session_players(player_id, player_name, total_buy_in, cash_out, net_balance), transfers(from_name, to_name, amount)').eq('owner_id', user.id).order('played_at'),
       supabase.from('participations').select('*').eq('user_id', user.id).order('session_date'),
-      supabase.from('friend_invites').select('id, requester_user_id, requester_player_id, invitee_email, invitee_user_id, status, created_at').eq('status', 'pending').order('created_at', { ascending: false }),
+      supabase.from('friend_invites').select('id, requester_user_id, requester_player_id, invitee_email, invitee_user_id, status, created_at, responded_at').order('created_at', { ascending: false }).limit(400),
     ]);
     let liveRes = { data: null, error: null };
     if (!skipLiveSessionCloud) {
@@ -2016,6 +2127,7 @@ function App() {
     if (!invitesRes.error) {
       const myEmail = (user.email || '').trim().toLowerCase();
       const incoming = (invitesData || []).filter(inv =>
+        inv.status === 'pending' &&
         inv.requester_user_id !== user.id && (
           inv.invitee_user_id === user.id ||
           (inv.invitee_email || '').trim().toLowerCase() === myEmail
@@ -2023,12 +2135,22 @@ function App() {
       );
       setPendingInvites(incoming);
       const outgoing = (invitesData || []).filter(inv => inv.requester_user_id === user.id);
+      setOutgoingInvites(outgoing);
       const outgoingMap = {};
       for (const inv of outgoing) {
         const emailKey = normalizeEmail(inv.invitee_email);
-        if (emailKey) outgoingMap[emailKey] = true;
+        if (!emailKey) continue;
+        const prev = outgoingMap[emailKey];
+        if (!prev || new Date(inv.created_at).getTime() > new Date(prev.created_at).getTime()) {
+          outgoingMap[emailKey] = {
+            id: inv.id,
+            status: inv.status,
+            created_at: inv.created_at,
+            responded_at: inv.responded_at || null,
+          };
+        }
       }
-      setOutgoingInviteByEmail(outgoingMap);
+      setOutgoingInviteMetaByEmail(outgoingMap);
     }
     const playerEmails = [...new Set((cloudPlayers || []).map(p => normalizeEmail(p.email)).filter(Boolean))];
     if (playerEmails.length === 0) {
@@ -2362,6 +2484,15 @@ function App() {
     void refreshCloudData();
     return null;
   };
+  const cancelInvite = async inviteId => {
+    const { error } = await supabase.rpc('cancel_friend_invite', { p_invite_id: inviteId });
+    if (error) {
+      notifyCloudFailure(error.message);
+      return 'Nie udało się cofnąć zaproszenia.';
+    }
+    void refreshCloudData();
+    return null;
+  };
   const unlinkPlayer = async (playerId) => {
     const prevRow = players.find(p => p.id === playerId);
     setPlayers(prev => prev.map(p => p.id === playerId ? { ...p, linked_user_id: null } : p));
@@ -2645,11 +2776,11 @@ function App() {
         )}
 
         <main className="flex-1 main-scroll-pad">
-          {tab === 'players' && <PlayersTab players={players} sessionPlayers={sessionPlayers} onAddPlayer={addPlayer} onUpdatePlayer={updatePlayer} onRemovePlayer={removePlayer} onAddToSession={addToSession} onUnlinkPlayer={unlinkPlayer} currentUserId={user.id} accountByEmail={accountByEmail} outgoingInviteByEmail={outgoingInviteByEmail} />}
+          {tab === 'players' && <PlayersTab players={players} sessionPlayers={sessionPlayers} onAddPlayer={addPlayer} onUpdatePlayer={updatePlayer} onRemovePlayer={removePlayer} onAddToSession={addToSession} onUnlinkPlayer={unlinkPlayer} currentUserId={user.id} accountByEmail={accountByEmail} outgoingInviteMetaByEmail={outgoingInviteMetaByEmail} />}
           {tab === 'session' && <SessionTab players={players} sessionPlayers={sessionPlayers} defaultBuyIn={defaultBuyIn} totalPot={totalPot} autoAddMeToSession={autoAddMeToSession} onToggleAutoAddMe={setAutoAddMeToSession} onDefaultBuyInChange={setDefaultBuyIn} onAddBuyIn={addBuyIn} onRemoveBuyIn={removeBuyIn} onRemoveFromSession={removeFromSession} onAddToSession={addToSession} onGoToSettlement={() => setTab('settlement')} />}
           {tab === 'settlement' && <SettlementTab players={players} sessionPlayers={sessionPlayers} transactions={transactions} settled={settled} totalPot={totalPot} onSetCashOut={setCashOut} onCalculate={handleCalculate} onResetSession={resetSession} onSaveAndFinish={saveAndFinishSession} savingSession={savingSession} saveStatus={saveStatus} />}
           {tab === 'history' && <HistoryTab history={combinedHistory} onUpdateSession={updateSession} onDeleteSession={deleteSession} failedSyncCount={failedCloudSaves.length} failedSessionIds={failedCloudSaves.map(x => x.sessionId)} onRetryFailedSaves={retryFailedSaves} retryingFailedSaves={retryingFailedSaves} />}
-          {tab === 'profile' && <ProfileView user={user} history={combinedHistory} players={players} pendingInvites={pendingInvites} onAcceptInvite={acceptInvite} onRejectInvite={rejectInvite} onUnlinkPlayer={unlinkPlayer} onSignOut={handleSignOut} onRefresh={handleManualRefresh} onRenameSelf={syncSelfPlayerName} refreshBusy={manualRefreshBusy} syncMeta={syncMeta} onRetrySyncFailed={retryFailedSaves} retryingFailedSaves={retryingFailedSaves} failedCloudSavesCount={failedCloudSaves.length} />}
+          {tab === 'profile' && <ProfileView user={user} history={combinedHistory} players={players} pendingInvites={pendingInvites} outgoingInvites={outgoingInvites} onAcceptInvite={acceptInvite} onRejectInvite={rejectInvite} onCancelInvite={cancelInvite} onUnlinkPlayer={unlinkPlayer} onSignOut={handleSignOut} onRefresh={handleManualRefresh} onRenameSelf={syncSelfPlayerName} refreshBusy={manualRefreshBusy} syncMeta={syncMeta} onRetrySyncFailed={retryFailedSaves} retryingFailedSaves={retryingFailedSaves} failedCloudSavesCount={failedCloudSaves.length} />}
         </main>
 
         <nav className="nav-safe fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-lg bg-green-950/90 backdrop-blur-sm border-t border-green-900 flex z-10" role="navigation" aria-label="Główne zakładki">
