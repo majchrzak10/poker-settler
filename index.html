@@ -700,13 +700,7 @@ function PlayersTab({ players, sessionPlayers, onAddPlayer, onUpdatePlayer, onRe
                 : hasAccount === true
                   ? 'Konto aktywne'
                   : 'Niezweryfikowany';
-          const statusIconMap = {
-            accepted: '🕊️',
-            invited: '✉️',
-            rejected: '⛔',
-            revoked: '↩',
-          };
-          const statusIcon = statusIconMap[statusKey] || '';
+          const statusDotClass = statusKey === 'accepted' ? 'bg-emerald-400' : '';
 
           return (
             <div key={p.id} className="bg-black/30 rounded-2xl border border-green-900 px-4 py-3">
@@ -744,10 +738,12 @@ function PlayersTab({ players, sessionPlayers, onAddPlayer, onUpdatePlayer, onRe
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
                         <p className="font-semibold text-white text-base leading-tight">{p.name}</p>
-                        {statusIcon && (
-                          <span className="text-sm leading-none" title={statusKey} aria-label={statusKey}>
-                            {statusIcon}
-                          </span>
+                        {statusDotClass && (
+                          <span
+                            className={`inline-block w-2 h-2 rounded-full ${statusDotClass}`}
+                            title={statusKey}
+                            aria-label={statusKey}
+                          />
                         )}
                       </div>
                       <p className="text-xs text-green-300/60">{p.phone || 'Brak numeru'}</p>
