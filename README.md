@@ -24,8 +24,8 @@ Kwoty w Supabase są przechowywane jako **centy (integer)**. UI pracuje na PLN (
    const SUPABASE_KEY = 'sb_publishable_...';  // anon/public key
    ```
 3. Uruchom migracje **po kolei** w **SQL Editor** (Supabase Dashboard), pliki z `supabase/migrations/`:
-   `000` … `012` (w tym **007** RLS profili/graczy, **008** Realtime, **009** RPC link/unlink znajomych, **010** zaproszenia z akceptacją, **011** sync self-player, **012** cofanie zaproszenia).
-   Dla starszych baz szczególnie ważne są: **003** (trigger tworzenia profilu), **005** (backfill brakujących profili + indeks linkowania), **009/010/012** (pełny invite-only flow znajomych przez RPC).
+   `000` … `013` (w tym **007** RLS profili/graczy, **008** Realtime, **009** RPC link/unlink znajomych, **010** zaproszenia z akceptacją, **011** sync self-player, **012** cofanie zaproszenia, **013** blokada edycji emaila konta).
+   Dla starszych baz szczególnie ważne są: **003** (trigger tworzenia profilu), **005** (backfill brakujących profili + indeks linkowania), **009/010/012** (pełny invite-only flow znajomych przez RPC), **013** (spójność: email niezmienny po rejestracji).
    Migracja **003** dodaje trigger: przy rejestracji od razu powstaje wiersz w `profiles` z emailem. Jeśli masz już własny trigger z panelu Supabase, uruchom skrypt świadomie (może nadpisać funkcję `handle_new_user`).
 4. Realtime: migracja **008** dopisuje tabele do publikacji `supabase_realtime`; jeśli wdrażasz ręcznie starszą bazę, w Dashboard → **Database → Publications** upewnij się, że te tabele są w replikacji (jak w **008**).
 

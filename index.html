@@ -1499,10 +1499,6 @@ function ProfileView({ user, history, players, pendingInvites, outgoingInvites, 
   const [draftPhone, setDraftPhone] = useState('');
   const [savingPhone, setSavingPhone] = useState(false);
   const [phoneSaveError, setPhoneSaveError] = useState('');
-  const [editingEmail, setEditingEmail] = useState(false);
-  const [draftEmail, setDraftEmail] = useState('');
-  const [savingEmail, setSavingEmail] = useState(false);
-  const [emailSaveError, setEmailSaveError] = useState('');
   const [inviteBusyId, setInviteBusyId] = useState(null);
   const [inviteMsg, setInviteMsg] = useState('');
   const [showSyncDetails, setShowSyncDetails] = useState(false);
@@ -1513,7 +1509,6 @@ function ProfileView({ user, history, players, pendingInvites, outgoingInvites, 
       setProfile(data);
       setDraftName(data?.display_name || user.email?.split('@')[0] || '');
       setDraftPhone(data?.phone ? formatPhone(data.phone) : '');
-      setDraftEmail(data?.email || user.email || '');
     });
     supabase.from('participations').select('*').eq('user_id', user.id).order('session_date', { ascending: false }).then(({ data }) => {
       if (data) setMyGames(data);
@@ -1530,7 +1525,6 @@ function ProfileView({ user, history, players, pendingInvites, outgoingInvites, 
         setProfile(data);
         setDraftName(data.display_name || user.email?.split('@')[0] || '');
         setDraftPhone(data.phone ? formatPhone(data.phone) : '');
-        setDraftEmail(data?.email || user.email || '');
       });
     };
     document.addEventListener('visibilitychange', onVis);
@@ -1539,7 +1533,7 @@ function ProfileView({ user, history, players, pendingInvites, outgoingInvites, 
 
   const buildProfilePayload = (patch = {}) => {
     const safeName = (patch.display_name ?? draftName ?? profile?.display_name ?? user.email?.split('@')[0] ?? 'Gracz').trim() || 'Gracz';
-    const safeEmailRaw = (patch.email ?? draftEmail ?? profile?.email ?? user.email ?? '').trim().toLowerCase();
+    const safeEmailRaw = (profile?.email ?? user.email ?? '').trim().toLowerCase();
     const safePhoneRaw = patch.phone !== undefined
       ? patch.phone
       : (draftPhone ? draftPhone.replace(/\s/g, '') : (profile?.phone ?? null));
@@ -1591,25 +1585,6 @@ function ProfileView({ user, history, players, pendingInvites, outgoingInvites, 
     await supabase.from('players').update({ phone: digits }).eq('owner_id', user.id).eq('linked_user_id', user.id);
     setProfile(prev => ({ ...prev, phone: digits }));
     setEditingPhone(false);
-    if (onRefresh) await onRefresh();
-  };
-  const saveEmail = async () => {
-    const emailNorm = draftEmail.trim().toLowerCase();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailNorm)) {
-      setEmailSaveError('Podaj poprawny email.');
-      return;
-    }
-    setSavingEmail(true);
-    setEmailSaveError('');
-    const { error } = await persistProfilePatch({ email: emailNorm });
-    setSavingEmail(false);
-    if (error) {
-      setEmailSaveError('Nie udało się zapisać emaila. Spróbuj ponownie.');
-      return;
-    }
-    await supabase.from('players').update({ email: emailNorm }).eq('owner_id', user.id).eq('linked_user_id', user.id);
-    setProfile(prev => ({ ...prev, email: emailNorm }));
-    setEditingEmail(false);
     if (onRefresh) await onRefresh();
   };
 
@@ -1700,30 +1675,10 @@ function ProfileView({ user, history, players, pendingInvites, outgoingInvites, 
                 </button>
               )}
             </div>
-            {!editingEmail ? (
-              <div className="flex items-center gap-1.5 mt-0.5">
-                <p className="text-xs text-green-200/50 truncate">{profile?.email || user.email}</p>
-                <button onClick={() => { setEditingEmail(true); setEmailSaveError(''); }}
-                  className="text-green-800 hover:text-green-400 transition-colors shrink-0">
-                  <IconPencil />
-                </button>
-              </div>
-            ) : (
-              <div className="mt-1 space-y-1">
-                <div className="flex gap-2 items-center">
-                  <input value={draftEmail} onChange={e => { setDraftEmail(e.target.value); setEmailSaveError(''); }}
-                    type="email" autoFocus placeholder="Email"
-                    className="flex-1 bg-black/40 rounded-xl px-3 py-1.5 text-sm text-white border border-green-800 focus:outline-none focus:border-rose-600 transition-colors" />
-                  <button onClick={saveEmail} disabled={savingEmail}
-                    className="shrink-0 text-xs bg-rose-800 hover:bg-rose-900 disabled:opacity-40 rounded-xl px-3 py-1.5 font-semibold transition-colors">
-                    {savingEmail ? '...' : 'Zapisz'}
-                  </button>
-                  <button onClick={() => { setEditingEmail(false); setDraftEmail(profile?.email || user.email || ''); }}
-                    className="shrink-0 text-green-200/50 hover:text-white transition-colors px-1">✕</button>
-                </div>
-                {emailSaveError && <p className="text-xs text-rose-400 px-1">{emailSaveError}</p>}
-              </div>
-            )}
+            <div className="mt-0.5">
+              <p className="text-xs text-green-200/50 truncate">{profile?.email || user.email}</p>
+              <p className="text-[11px] text-green-200/35">Email konta jest stały po rejestracji.</p>
+            </div>
             {!editingPhone ? (
               <div className="flex items-center gap-1.5 mt-0.5">
                 <p className="text-xs text-green-200/40 truncate">
