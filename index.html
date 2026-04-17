@@ -1840,6 +1840,7 @@ function App() {
   const [syncMeta, setSyncMeta] = useState(() => sanitizeSyncMeta(loadLS(SYNC_META_KEY, { lastAttempt: null, lastSuccess: null, lastError: null })));
   const [skipLiveSessionCloud, setSkipLiveSessionCloud] = useState(false);
   const [cloudBanner, setCloudBanner] = useState(null);
+  const [syncChannelNonce, setSyncChannelNonce] = useState(0);
   const [onboardingOpen, setOnboardingOpen] = useState(() => !loadLS(ONBOARDING_KEY, false));
   const applyingRemoteSessionRef = React.useRef(false);
   const lastDraftHashRef = React.useRef(buildDraftHash(defaultBuyIn, sessionPlayers));
@@ -2077,6 +2078,8 @@ function App() {
     if (!user) return;
     let timer = null;
     let inFlight = false;
+    let reconnectTimer = null;
+    let reconnectScheduled = false;
     const scheduleRefresh = () => {
       clearTimeout(timer);
       timer = setTimeout(async () => {
@@ -2089,7 +2092,16 @@ function App() {
         }
       }, 300);
     };
-    let channel = supabase.channel(`sync-${user.id}`)
+    const scheduleReconnect = reason => {
+      if (reconnectScheduled) return;
+      reconnectScheduled = true;
+      reconnectTimer = setTimeout(() => {
+        reconnectScheduled = false;
+        setSyncChannelNonce(n => n + 1);
+      }, 1200);
+      if (reason) console.warn('sync channel reconnect scheduled:', reason);
+    };
+    let channel = supabase.channel(`sync-${user.id}-${syncChannelNonce}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'players', filter: `owner_id=eq.${user.id}` }, scheduleRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'sessions', filter: `owner_id=eq.${user.id}` }, scheduleRefresh);
     if (!skipLiveSessionCloud) {
@@ -2098,7 +2110,15 @@ function App() {
     channel = channel
       .on('postgres_changes', { event: '*', schema: 'public', table: 'participations', filter: `user_id=eq.${user.id}` }, scheduleRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'friend_invites' }, scheduleRefresh)
-      .subscribe();
+      .subscribe(status => {
+        if (status === 'SUBSCRIBED') {
+          scheduleRefresh();
+          return;
+        }
+        if (status === 'CHANNEL_ERROR' || status === 'CLOSED' || status === 'TIMED_OUT') {
+          scheduleReconnect(status);
+        }
+      });
 
     const poll = setInterval(() => {
       if (!document.hidden) scheduleRefresh();
@@ -2106,17 +2126,26 @@ function App() {
 
     const onFocus = () => scheduleRefresh();
     const onOnline = () => scheduleRefresh();
+    const onVisibility = () => {
+      if (!document.hidden) scheduleRefresh();
+    };
+    const onPageShow = () => scheduleRefresh();
     window.addEventListener('focus', onFocus);
     window.addEventListener('online', onOnline);
+    window.addEventListener('pageshow', onPageShow);
+    document.addEventListener('visibilitychange', onVisibility);
 
     return () => {
       clearTimeout(timer);
+      clearTimeout(reconnectTimer);
       clearInterval(poll);
       window.removeEventListener('focus', onFocus);
       window.removeEventListener('online', onOnline);
+      window.removeEventListener('pageshow', onPageShow);
+      document.removeEventListener('visibilitychange', onVisibility);
       supabase.removeChannel(channel);
     };
-  }, [user?.id, refreshCloudData, skipLiveSessionCloud]);
+  }, [user?.id, refreshCloudData, skipLiveSessionCloud, syncChannelNonce]);
 
   useEffect(() => {
     if (!user || !autoAddMeToSession) return;
