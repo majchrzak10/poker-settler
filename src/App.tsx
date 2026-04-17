@@ -123,6 +123,24 @@ export default function App() {
     defaultBuyInRef.current = defaultBuyIn;
   }, [defaultBuyIn]);
 
+  /** Jeśli numer jest tylko przy powiązanym graczu (players), a profiles.phone jest puste — uzupełnij profil (spójność z zakładką Gracze). */
+  useEffect(() => {
+    if (!user?.id || !accountProfile) return;
+    if (accountProfile.phone) return;
+    const self = players.find(p => p.linked_user_id === user.id);
+    if (!self?.phone) return;
+    const digits = normalizePhoneDigits(self.phone);
+    if (digits.length < 9) return;
+    let cancelled = false;
+    (async () => {
+      const { error } = await supabase.from('profiles').update({ phone: digits }).eq('id', user.id);
+      if (!cancelled && !error) await reloadAccountProfile();
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id, accountProfile, players, reloadAccountProfile]);
+
   const { refreshCloudData } = useCloudSync({
     user,
     players,

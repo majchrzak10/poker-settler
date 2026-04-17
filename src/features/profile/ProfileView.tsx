@@ -1,18 +1,28 @@
 // @ts-nocheck
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../../lib/supabase';
-import { pluralPL, formatPln } from '../../lib/settlement';
+import { pluralPL } from '../../lib/settlement';
 import { formatPhone, formatDate } from '../../lib/format';
 import { summarizeSyncError } from '../../sync/errors';
-import { NetBadge } from '../history/historyUtils';
 import { IconRefresh, IconPencil } from '../../ui/icons';
+
+const OUT_INVITE_STATUS_LABEL = {
+  pending: 'oczekuje',
+  accepted: 'zaakcept.',
+  rejected: 'odrzucono',
+  revoked: 'cofnięto',
+  invited: 'wysłane',
+};
+function shortOutgoingStatus(status) {
+  const s = String(status || '').toLowerCase();
+  return OUT_INVITE_STATUS_LABEL[s] || s || '—';
+}
 
 export function ProfileView({ user, accountProfile, reloadAccountProfile, history, players, pendingInvites, outgoingInvites, onAcceptInvite, onRejectInvite, onCancelInvite, onUnlinkPlayer, onSignOut, onRefresh, onRenameSelf, refreshBusy, syncMeta, onRetrySyncFailed, retryingFailedSaves, failedCloudSavesCount }) {
   const [editingName, setEditingName] = useState(false);
   const [draftName, setDraftName] = useState('');
   const [savingName, setSavingName] = useState(false);
   const [nameSaveError, setNameSaveError] = useState('');
-  const [myGames, setMyGames] = useState([]);
   const [editingPhone, setEditingPhone] = useState(false);
   const [draftPhone, setDraftPhone] = useState('');
   const [savingPhone, setSavingPhone] = useState(false);
@@ -22,24 +32,32 @@ export function ProfileView({ user, accountProfile, reloadAccountProfile, histor
   const [showSyncDetails, setShowSyncDetails] = useState(false);
 
   useEffect(() => {
-    supabase.from('participations').select('*').eq('user_id', user.id).order('session_date', { ascending: false }).then(({ data }) => {
-      if (data) setMyGames(data);
-    });
     supabase.from('profiles').update({ email: (user.email || '').trim().toLowerCase() }).eq('id', user.id);
   }, [user.id]);
 
+  const selfPlayer = useMemo(
+    () => (players || []).find(p => p.linked_user_id === user.id),
+    [players, user.id]
+  );
+  /** Ten sam merge co w Graczach: profil konta, potem wiersz „Ty” w players. */
+  const mergedPhoneRaw = accountProfile?.phone ?? selfPlayer?.phone ?? null;
+  const mergedDisplayName =
+    (accountProfile?.display_name || '').trim() || selfPlayer?.name || user.email?.split('@')[0] || 'Gracz';
+
   useEffect(() => {
-    if (!accountProfile) return;
-    setDraftName(accountProfile.display_name || user.email?.split('@')[0] || '');
-    setDraftPhone(accountProfile.phone ? formatPhone(accountProfile.phone) : '');
-  }, [accountProfile, user.email]);
+    const phoneRaw = accountProfile?.phone ?? selfPlayer?.phone;
+    setDraftName(
+      (accountProfile?.display_name || '').trim() || selfPlayer?.name || user.email?.split('@')[0] || ''
+    );
+    setDraftPhone(phoneRaw ? formatPhone(String(phoneRaw)) : '');
+  }, [accountProfile, selfPlayer, user.email]);
 
   const buildProfilePayload = (patch = {}) => {
     const safeName = (patch.display_name ?? draftName ?? accountProfile?.display_name ?? user.email?.split('@')[0] ?? 'Gracz').trim() || 'Gracz';
     const safeEmailRaw = (accountProfile?.email ?? user.email ?? '').trim().toLowerCase();
     const safePhoneRaw = patch.phone !== undefined
       ? patch.phone
-      : (draftPhone ? draftPhone.replace(/\s/g, '') : (accountProfile?.phone ?? null));
+      : (draftPhone ? draftPhone.replace(/\s/g, '') : (accountProfile?.phone ?? selfPlayer?.phone ?? null));
     const safePhone = safePhoneRaw ? String(safePhoneRaw).replace(/\s/g, '') : null;
     return {
       id: user.id,
@@ -91,12 +109,9 @@ export function ProfileView({ user, accountProfile, reloadAccountProfile, histor
     if (onRefresh) await onRefresh();
   };
 
-  const totalMyGamesBalance = useMemo(
-    () => myGames.reduce((sum, g) => sum + (g.net_balance || 0), 0) / 100,
-    [myGames]
-  );
-
-  const displayName = accountProfile?.display_name || user.email?.split('@')[0] || 'Gracz';
+  const displayName = mergedDisplayName;
+  const pendingCount = (pendingInvites || []).length;
+  const outgoingCount = (outgoingInvites || []).length;
 
   return (
     <div className="p-4 space-y-5 pb-6">
@@ -140,7 +155,7 @@ export function ProfileView({ user, accountProfile, reloadAccountProfile, histor
             {!editingPhone ? (
               <div className="flex items-center gap-1.5 mt-0.5">
                 <p className="text-xs text-green-200/40 truncate">
-                  {accountProfile?.phone ? formatPhone(accountProfile.phone) : 'Brak numeru telefonu'}
+                  {mergedPhoneRaw ? formatPhone(String(mergedPhoneRaw)) : 'Brak numeru telefonu'}
                 </p>
                 <button onClick={() => { setEditingPhone(true); setPhoneSaveError(''); }}
                   className="text-green-800 hover:text-green-400 transition-colors shrink-0">
@@ -157,7 +172,7 @@ export function ProfileView({ user, accountProfile, reloadAccountProfile, histor
                     className="shrink-0 text-xs bg-rose-800 hover:bg-rose-900 disabled:opacity-40 rounded-xl px-3 py-1.5 font-semibold transition-colors">
                     {savingPhone ? '...' : 'Zapisz'}
                   </button>
-                  <button onClick={() => { setEditingPhone(false); setDraftPhone(accountProfile?.phone ? formatPhone(accountProfile.phone) : ''); }}
+                  <button onClick={() => { setEditingPhone(false); setDraftPhone(mergedPhoneRaw ? formatPhone(String(mergedPhoneRaw)) : ''); }}
                     className="shrink-0 text-green-200/50 hover:text-white transition-colors px-1">✕</button>
                 </div>
                 {phoneSaveError && <p className="text-xs text-rose-400 px-1">{phoneSaveError}</p>}
@@ -178,7 +193,7 @@ export function ProfileView({ user, accountProfile, reloadAccountProfile, histor
                 className="shrink-0 text-sm bg-rose-800 hover:bg-rose-900 disabled:opacity-40 rounded-xl px-4 py-2 font-semibold transition-colors">
                 {savingName ? '...' : 'Zapisz'}
               </button>
-              <button onClick={() => { setEditingName(false); setDraftName(accountProfile?.display_name || user.email?.split('@')[0] || ''); setNameSaveError(''); }}
+              <button onClick={() => { setEditingName(false); setDraftName(mergedDisplayName); setNameSaveError(''); }}
                 className="shrink-0 text-green-200/50 hover:text-white transition-colors px-1">✕</button>
             </div>
             {nameSaveError && <p className="text-xs text-rose-400 px-1">{nameSaveError}</p>}
@@ -216,120 +231,96 @@ export function ProfileView({ user, accountProfile, reloadAccountProfile, histor
       )}
       <p className="text-[11px] text-green-200/35 px-1">Konto i historia sesji są przechowywane w chmurze po zalogowaniu.</p>
 
-      <div className="bg-black/30 border border-green-900 rounded-2xl p-4 space-y-3">
-        <div>
-          <h3 className="text-sm font-semibold text-white">Zaproszenia do znajomych</h3>
-          <p className="text-xs text-green-200/50 mt-0.5">Akceptuj zaproszenia, aby połączyć konta automatycznie.</p>
+      {(pendingCount > 0 || outgoingCount > 0) && (
+        <div className="rounded-xl border border-green-900/55 bg-black/25 px-3 py-2 space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="text-xs font-medium text-white/90">Zaproszenia</h3>
+            <span className="text-[10px] text-green-200/40 tabular-nums">
+              {pendingCount ? `${pendingCount} przych.` : ''}{pendingCount && outgoingCount ? ' · ' : ''}{outgoingCount ? `${outgoingCount} wysł.` : ''}
+            </span>
+          </div>
+          {pendingCount > 0 && (
+            <ul className="space-y-1">
+              {(pendingInvites || []).map(invite => (
+                <li key={invite.id} className="flex items-center gap-2 min-h-[28px]">
+                  <span className="flex-1 min-w-0 text-[11px] text-green-100/85 truncate" title={`${invite.invitee_email} · ${formatDate(invite.created_at)}`}>
+                    {invite.invitee_email}
+                  </span>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        setInviteBusyId(invite.id);
+                        setInviteMsg('');
+                        const err = await onAcceptInvite(invite.id);
+                        setInviteBusyId(null);
+                        setInviteMsg(err ? err : 'Zaakceptowano.');
+                      }}
+                      disabled={inviteBusyId === invite.id}
+                      className="text-[10px] leading-none px-2 py-1 rounded-md bg-emerald-900/70 hover:bg-emerald-800 text-emerald-100 disabled:opacity-40"
+                    >
+                      OK
+                    </button>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        setInviteBusyId(invite.id);
+                        setInviteMsg('');
+                        const err = await onRejectInvite(invite.id);
+                        setInviteBusyId(null);
+                        setInviteMsg(err ? err : 'Odrzucono.');
+                      }}
+                      disabled={inviteBusyId === invite.id}
+                      className="text-[10px] leading-none px-2 py-1 rounded-md border border-rose-900/60 text-rose-300/90 hover:bg-rose-950/40 disabled:opacity-40"
+                    >
+                      ×
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+          {outgoingCount > 0 && (
+            <ul className={`space-y-1 ${pendingCount > 0 ? 'pt-1 border-t border-green-900/35' : ''}`}>
+              {(outgoingInvites || []).map(invite => (
+                <li key={invite.id} className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px]">
+                  <span className="flex-1 min-w-0 text-green-200/75 truncate" title={invite.invitee_email}>{invite.invitee_email}</span>
+                  <span className="text-[10px] text-green-200/45 shrink-0">{shortOutgoingStatus(invite.status)}</span>
+                  {invite.status === 'pending' && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        setInviteBusyId(invite.id);
+                        setInviteMsg('');
+                        const err = await onCancelInvite(invite.id);
+                        setInviteBusyId(null);
+                        setInviteMsg(err ? err : 'Cofnięto.');
+                      }}
+                      disabled={inviteBusyId === invite.id}
+                      className="text-[10px] text-orange-300/80 hover:text-orange-200 underline underline-offset-2 disabled:opacity-40 ml-auto"
+                    >
+                      {inviteBusyId === invite.id ? '…' : 'cofnij'}
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
-        {(pendingInvites || []).length === 0 ? (
-          <p className="text-xs text-green-200/45">Brak oczekujących zaproszeń.</p>
-        ) : (pendingInvites || []).map(invite => (
-          <div key={invite.id} className="rounded-xl border border-green-900/80 bg-black/25 p-3">
-            <p className="text-sm text-white">Zaproszenie dla: <span className="text-emerald-300">{invite.invitee_email}</span></p>
-            <p className="text-xs text-green-200/45 mt-1">Wysłane: {formatDate(invite.created_at)}</p>
-            <div className="flex gap-2 mt-3">
-              <button
-                onClick={async () => {
-                  setInviteBusyId(invite.id);
-                  setInviteMsg('');
-                  const err = await onAcceptInvite(invite.id);
-                  setInviteBusyId(null);
-                  setInviteMsg(err ? err : 'Zaproszenie zaakceptowane.');
-                }}
-                disabled={inviteBusyId === invite.id}
-                className="text-xs bg-emerald-800 hover:bg-emerald-700 disabled:opacity-40 rounded-xl px-3 py-2 font-semibold transition-colors"
-              >
-                Akceptuj
-              </button>
-              <button
-                onClick={async () => {
-                  setInviteBusyId(invite.id);
-                  setInviteMsg('');
-                  const err = await onRejectInvite(invite.id);
-                  setInviteBusyId(null);
-                  setInviteMsg(err ? err : 'Zaproszenie odrzucone.');
-                }}
-                disabled={inviteBusyId === invite.id}
-                className="text-xs bg-rose-900/50 hover:bg-rose-800 border border-rose-800 text-rose-300 rounded-xl px-3 py-2 transition-colors"
-              >
-                Odrzuć
-              </button>
-            </div>
-          </div>
-        ))}
-        {inviteMsg && <p className={`text-xs ${inviteMsg.includes('zaakceptowane') ? 'text-emerald-400' : inviteMsg.includes('odrzucone') ? 'text-green-300/70' : 'text-rose-400'}`}>{inviteMsg}</p>}
-      </div>
-
-      <div className="bg-black/30 border border-green-900 rounded-2xl p-4 space-y-3">
-        <div>
-          <h3 className="text-sm font-semibold text-white">Wysłane zaproszenia</h3>
-          <p className="text-xs text-green-200/50 mt-0.5">Statusy relacji: invited / accepted / rejected / revoked.</p>
-        </div>
-        {(outgoingInvites || []).length === 0 ? (
-          <p className="text-xs text-green-200/45">Brak wysłanych zaproszeń.</p>
-        ) : (outgoingInvites || []).map(invite => (
-          <div key={invite.id} className="rounded-xl border border-green-900/80 bg-black/25 p-3 space-y-2">
-            <div className="flex items-center justify-between gap-2">
-              <p className="text-sm text-white truncate">{invite.invitee_email}</p>
-              <span className="text-[10px] border rounded-md px-1.5 py-0.5 text-green-200/80 border-green-800 bg-black/30">
-                {invite.status}
-              </span>
-            </div>
-            <p className="text-xs text-green-200/45">
-              Wysłane: {formatDate(invite.created_at)}
-              {invite.responded_at ? ` · Odpowiedź: ${formatDate(invite.responded_at)}` : ''}
-            </p>
-            {invite.status === 'pending' && (
-              <button
-                onClick={async () => {
-                  setInviteBusyId(invite.id);
-                  setInviteMsg('');
-                  const err = await onCancelInvite(invite.id);
-                  setInviteBusyId(null);
-                  setInviteMsg(err ? err : 'Zaproszenie cofnięte.');
-                }}
-                disabled={inviteBusyId === invite.id}
-                className="text-xs bg-orange-900/45 hover:bg-orange-800 border border-orange-800 text-orange-200 rounded-xl px-3 py-2 transition-colors"
-              >
-                {inviteBusyId === invite.id ? '...' : 'Cofnij zaproszenie'}
-              </button>
-            )}
-          </div>
-        ))}
-      </div>
-
-      <div>
-        <h2 className="text-lg font-bold text-white tracking-tight mb-3">Moje gry ({myGames.length})</h2>
-        {myGames.length > 0 && (
-          <div className={`rounded-2xl border p-4 mb-3 flex items-center justify-between ${totalMyGamesBalance > 0 ? 'bg-emerald-900/20 border-emerald-800' : totalMyGamesBalance < 0 ? 'bg-red-900/20 border-red-800/60' : 'bg-black/30 border-green-900'}`}>
-            <div>
-              <p className="text-xs text-green-200/60 uppercase tracking-wider font-medium">Łączny bilans</p>
-              <p className="text-xs text-green-200/40 mt-0.5">{myGames.length} {pluralPL(myGames.length, 'gra', 'gry', 'gier')} jako uczestnik</p>
-            </div>
-            <NetBadge value={totalMyGamesBalance} />
-          </div>
-        )}
-        {myGames.length === 0 ? (
-          <div className="text-center py-10 bg-black/20 rounded-2xl border border-dashed border-green-900">
-            <p className="text-green-200/50 text-sm">Brak gier.</p>
-            <p className="text-green-200/45 text-xs mt-1">Organizator musi połączyć Cię z kontem.</p>
-          </div>
-        ) : myGames.map(g => {
-          const net = g.net_balance != null ? g.net_balance / 100 : null;
-          const buyIn = g.total_buy_in / 100;
-          const cashOut = g.cash_out != null ? g.cash_out / 100 : null;
-          const date = new Date(g.session_date).toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit', year: 'numeric' });
-          return (
-            <div key={g.id} className="bg-black/30 border border-green-900 rounded-2xl px-4 py-3 flex items-center gap-3 mb-2">
-              <div className="flex-1 min-w-0">
-                <p className="font-semibold text-white text-sm">{date}</p>
-                <p className="text-xs text-green-200/55 tabular-nums">Pula: <span className="text-yellow-400">{formatPln(g.total_pot / 100)} PLN</span> · Buy-in: {formatPln(buyIn)} PLN</p>
-              </div>
-              {net != null ? <NetBadge value={net} /> : <span className="text-xs text-green-200/55">–</span>}
-            </div>
-          );
-        })}
-      </div>
+      )}
+      {inviteMsg && (
+        <p
+          className={`text-[10px] px-1 ${
+            inviteMsg.includes('Zaakceptowano') || inviteMsg.includes('Cofnięto')
+              ? 'text-emerald-400/90'
+              : inviteMsg.includes('Odrzucono')
+                ? 'text-green-300/70'
+                : 'text-rose-400/90'
+          }`}
+        >
+          {inviteMsg}
+        </p>
+      )}
     </div>
   );
 }
