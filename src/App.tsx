@@ -27,6 +27,7 @@ import {
 } from './lib/storage';
 import { getTotalBuyIn, normalizePhoneDigits } from './lib/format';
 import { useAuth } from './auth/useAuth';
+import { useAccountProfile } from './auth/useAccountProfile';
 import { LoadingScreen, EmailConfirmedScreen, AuthScreen } from './features/auth/AuthScreens';
 import { PlayersTab } from './features/players/PlayersTab';
 import { SessionTab } from './features/session/SessionTab';
@@ -37,6 +38,7 @@ import { TABS, SCREEN_META } from './app/navigation';
 
 export default function App() {
   const { user, loading: authLoading, emailConfirmed, setEmailConfirmed } = useAuth();
+  const { profile: accountProfile, reload: reloadAccountProfile } = useAccountProfile(user);
   const [players, setPlayers] = useState(() => loadLS('poker_players', []));
   const [sessionPlayers, setSessionPlayers] = useState(() => loadLS('poker_session', []));
   const [defaultBuyIn, setDefaultBuyIn] = useState(() => loadLS('poker_default_buyin', 50));
@@ -289,6 +291,23 @@ export default function App() {
         notifyCloudFailure(error.message);
       }
     } else if (!error) {
+      if (prevRow?.linked_user_id === user.id) {
+        const digits = normalizePhoneDigits(phone);
+        const emailAccount = normalizeEmail(user.email);
+        const patch = {
+          id: user.id,
+          display_name: (name || '').trim() || 'Gracz',
+          email: emailAccount,
+          phone: digits.length >= 9 ? digits : null,
+        };
+        const { error: profErr } = await supabase.from('profiles').update({
+          display_name: patch.display_name,
+          phone: patch.phone,
+          email: patch.email,
+        }).eq('id', user.id);
+        if (profErr) await supabase.from('profiles').upsert(patch);
+        await reloadAccountProfile();
+      }
       try {
         const inviteCreated = await createInviteIfPossible(id, emailNorm);
         if (inviteCreated && normalizeEmail(prevRow?.email) !== emailNorm) {
@@ -564,6 +583,7 @@ export default function App() {
     setManualRefreshBusy(true);
     try {
       await refreshCloudData();
+      await reloadAccountProfile();
     } finally {
       setManualRefreshBusy(false);
     }
@@ -577,7 +597,13 @@ export default function App() {
     if (selfIds.length === 0) return;
     setPlayers(prev => prev.map(p => selfIds.includes(p.id) ? { ...p, name: nextName } : p));
     const { error: playersErr } = await supabase.from('players').update({ name: nextName }).eq('owner_id', user.id).eq('linked_user_id', user.id);
-    if (playersErr) notifyCloudFailure(playersErr.message);
+    if (playersErr) {
+      notifyCloudFailure(playersErr.message);
+      return;
+    }
+    const { error: profErr } = await supabase.from('profiles').update({ display_name: nextName.trim() }).eq('id', user.id);
+    if (profErr) await supabase.from('profiles').upsert({ id: user.id, display_name: nextName.trim(), email: myEmail });
+    await reloadAccountProfile();
   };
 
   if (authLoading) return <LoadingScreen />;
@@ -631,11 +657,11 @@ export default function App() {
         )}
 
         <main className="flex-1 main-scroll-pad">
-          {tab === 'players' && <PlayersTab players={players} sessionPlayers={sessionPlayers} onAddPlayer={addPlayer} onUpdatePlayer={updatePlayer} onRemovePlayer={removePlayer} onAddToSession={addToSession} onUnlinkPlayer={unlinkPlayer} currentUserId={user.id} accountByEmail={accountByEmail} outgoingInviteMetaByEmail={outgoingInviteMetaByEmail} />}
+          {tab === 'players' && <PlayersTab players={players} sessionPlayers={sessionPlayers} onAddPlayer={addPlayer} onUpdatePlayer={updatePlayer} onRemovePlayer={removePlayer} onAddToSession={addToSession} onUnlinkPlayer={unlinkPlayer} currentUserId={user.id} accountByEmail={accountByEmail} outgoingInviteMetaByEmail={outgoingInviteMetaByEmail} accountProfile={accountProfile} accountEmail={(user.email || '').trim().toLowerCase()} />}
           {tab === 'session' && <SessionTab players={players} sessionPlayers={sessionPlayers} defaultBuyIn={defaultBuyIn} totalPot={totalPot} autoAddMeToSession={autoAddMeToSession} onToggleAutoAddMe={setAutoAddMeToSession} onDefaultBuyInChange={setDefaultBuyIn} onAddBuyIn={addBuyIn} onRemoveBuyIn={removeBuyIn} onRemoveFromSession={removeFromSession} onAddToSession={addToSession} onGoToSettlement={() => setTab('settlement')} />}
           {tab === 'settlement' && <SettlementTab players={players} sessionPlayers={sessionPlayers} transactions={transactions} settled={settled} totalPot={totalPot} onSetCashOut={setCashOut} onCalculate={handleCalculate} onResetSession={resetSession} onSaveAndFinish={saveAndFinishSession} savingSession={savingSession} saveStatus={saveStatus} />}
           {tab === 'history' && <HistoryTab history={combinedHistory} onUpdateSession={updateSession} onDeleteSession={deleteSession} failedSyncCount={failedCloudSaves.length} failedSessionIds={failedCloudSaves.map(x => x.sessionId)} onRetryFailedSaves={retryFailedSaves} retryingFailedSaves={retryingFailedSaves} />}
-          {tab === 'profile' && <ProfileView user={user} history={combinedHistory} players={players} pendingInvites={pendingInvites} outgoingInvites={outgoingInvites} onAcceptInvite={acceptInvite} onRejectInvite={rejectInvite} onCancelInvite={cancelInvite} onUnlinkPlayer={unlinkPlayer} onSignOut={handleSignOut} onRefresh={handleManualRefresh} onRenameSelf={syncSelfPlayerName} refreshBusy={manualRefreshBusy} syncMeta={syncMeta} onRetrySyncFailed={retryFailedSaves} retryingFailedSaves={retryingFailedSaves} failedCloudSavesCount={failedCloudSaves.length} />}
+          {tab === 'profile' && <ProfileView user={user} accountProfile={accountProfile} reloadAccountProfile={reloadAccountProfile} history={combinedHistory} players={players} pendingInvites={pendingInvites} outgoingInvites={outgoingInvites} onAcceptInvite={acceptInvite} onRejectInvite={rejectInvite} onCancelInvite={cancelInvite} onUnlinkPlayer={unlinkPlayer} onSignOut={handleSignOut} onRefresh={handleManualRefresh} onRenameSelf={syncSelfPlayerName} refreshBusy={manualRefreshBusy} syncMeta={syncMeta} onRetrySyncFailed={retryFailedSaves} retryingFailedSaves={retryingFailedSaves} failedCloudSavesCount={failedCloudSaves.length} />}
         </main>
 
         <nav className="nav-safe fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-lg bg-green-950/90 backdrop-blur-sm border-t border-green-900 flex z-10" role="navigation" aria-label="Główne zakładki">

@@ -3,7 +3,7 @@ import React, { useState } from 'react';
 import { formatPhone } from '../../lib/format';
 import { IconUserPlus, IconCheck, IconX, IconPlus, IconPencil, IconTrash } from '../../ui/icons';
 
-export function PlayersTab({ players, sessionPlayers, onAddPlayer, onUpdatePlayer, onRemovePlayer, onAddToSession, onUnlinkPlayer, currentUserId, accountByEmail, outgoingInviteMetaByEmail }) {
+export function PlayersTab({ players, sessionPlayers, onAddPlayer, onUpdatePlayer, onRemovePlayer, onAddToSession, onUnlinkPlayer, currentUserId, accountByEmail, outgoingInviteMetaByEmail, accountProfile, accountEmail }) {
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
@@ -16,8 +16,10 @@ export function PlayersTab({ players, sessionPlayers, onAddPlayer, onUpdatePlaye
   const emailError = email.trim().length > 0 && !emailValid;
   const canSubmit = name.trim().length > 0 && phoneValid && emailValid;
 
+  const draftPhoneDigits = draft.phone.replace(/\D/g, '');
   const draftPhoneValid = draft.phone.length === 11;
   const draftPhoneError = draft.phone.length > 0 && draft.phone.length < 11;
+  const draftPhoneOkSelf = draftPhoneDigits.length === 0 || draftPhoneDigits.length === 9;
   const draftEmailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test((draft.email || '').trim().toLowerCase());
   const draftEmailError = (draft.email || '').trim().length > 0 && !draftEmailValid;
   const canSaveDraft = draft.name.trim().length > 0 && draftPhoneValid && draftEmailValid;
@@ -31,11 +33,26 @@ export function PlayersTab({ players, sessionPlayers, onAddPlayer, onUpdatePlaye
     setName(''); setPhone(''); setEmail('');
   };
 
-  const enterEdit = p => { setEditingId(p.id); setDraft({ name: p.name, phone: p.phone, email: p.email || '' }); };
+  const enterEdit = p => {
+    const isSelf = p.linked_user_id === currentUserId;
+    const name = isSelf ? ((accountProfile?.display_name || '').trim() || p.name) : p.name;
+    const phoneRaw = isSelf ? (accountProfile?.phone ?? p.phone) : p.phone;
+    const emailForRow = isSelf ? (accountEmail || p.email || '') : (p.email || '');
+    setEditingId(p.id);
+    setDraft({ name, phone: formatPhone(String(phoneRaw || '')), email: emailForRow });
+  };
   const cancelEdit = () => { setEditingId(null); setDraft({ name: '', phone: '', email: '' }); };
-  const confirmEdit = id => {
-    if (!canSaveDraft) return;
-    onUpdatePlayer(id, draft.name.trim(), draft.phone, draft.email.trim().toLowerCase());
+  const confirmEdit = (id, isSelfPlayer) => {
+    if (isSelfPlayer) {
+      const emailNorm = (accountEmail || '').trim().toLowerCase();
+      const digits = draft.phone.replace(/\D/g, '');
+      if (digits.length > 0 && digits.length !== 9) return;
+      if (!draft.name.trim()) return;
+      onUpdatePlayer(id, draft.name.trim(), draft.phone, emailNorm);
+    } else {
+      if (!canSaveDraft) return;
+      onUpdatePlayer(id, draft.name.trim(), draft.phone, draft.email.trim().toLowerCase());
+    }
     cancelEdit();
   };
 
@@ -76,8 +93,13 @@ export function PlayersTab({ players, sessionPlayers, onAddPlayer, onUpdatePlaye
           const inSession = sessionPlayers.some(sp => sp.playerId === p.id);
           const isEditing = editingId === p.id;
           const isSelfPlayer = p.linked_user_id === currentUserId;
+          const displayName = isSelfPlayer ? ((accountProfile?.display_name || '').trim() || p.name) : p.name;
+          const displayPhoneRaw = isSelfPlayer ? (accountProfile?.phone ?? p.phone) : p.phone;
+          const displayPhone = displayPhoneRaw ? formatPhone(String(displayPhoneRaw)) : 'Brak numeru';
+          const displayEmail = isSelfPlayer ? (accountEmail || '') : ((p.email || '').trim().toLowerCase());
           const emailNorm = (p.email || '').trim().toLowerCase();
-          const hasAccount = emailNorm ? accountByEmail[emailNorm] : undefined;
+          const lookupEmail = isSelfPlayer ? (accountEmail || '').trim().toLowerCase() : emailNorm;
+          const hasAccount = lookupEmail ? accountByEmail[lookupEmail] : undefined;
           const inviteMeta = emailNorm ? outgoingInviteMetaByEmail[emailNorm] : null;
           const inviteStatus = inviteMeta?.status || null;
           const statusKey = p.linked_user_id
@@ -108,16 +130,20 @@ export function PlayersTab({ players, sessionPlayers, onAddPlayer, onUpdatePlaye
                     <input value={draft.phone} onChange={e => setDraft(d => ({ ...d, phone: formatPhone(e.target.value) }))}
                       placeholder="Numer telefonu" type="tel" inputMode="numeric" maxLength={11}
                       className={`w-full bg-black/40 rounded-xl px-3 py-2.5 text-sm text-white placeholder-green-700 border transition-colors focus:outline-none ${draftPhoneError ? 'border-red-500' : 'border-green-800 focus:border-rose-600'}`} />
-                    {draftPhoneError && <p className="text-xs text-red-400 px-1">Podaj pełny, 9-cyfrowy numer</p>}
+                    {draftPhoneError && !isSelfPlayer && <p className="text-xs text-red-400 px-1">Podaj pełny, 9-cyfrowy numer</p>}
+                    {isSelfPlayer && draftPhoneDigits.length > 0 && draftPhoneDigits.length !== 9 && (
+                      <p className="text-xs text-red-400 px-1">Podaj pełny numer (9 cyfr) lub zostaw puste.</p>
+                    )}
                   </div>
                   <div className="space-y-1">
-                    <input value={draft.email} onChange={e => setDraft(d => ({ ...d, email: e.target.value }))}
-                      placeholder="Email znajomego" type="email" autoComplete="off"
-                      className={`w-full bg-black/40 rounded-xl px-3 py-2.5 text-sm text-white placeholder-green-700 border transition-colors focus:outline-none ${draftEmailError ? 'border-red-500' : 'border-green-800 focus:border-rose-600'}`} />
-                    {draftEmailError && <p className="text-xs text-red-400 px-1">Podaj poprawny email</p>}
+                    <input value={isSelfPlayer ? (accountEmail || '') : draft.email} onChange={e => !isSelfPlayer && setDraft(d => ({ ...d, email: e.target.value }))}
+                      placeholder="Email znajomego" type="email" autoComplete="off" readOnly={isSelfPlayer}
+                      className={`w-full bg-black/40 rounded-xl px-3 py-2.5 text-sm text-white placeholder-green-700 border transition-colors focus:outline-none ${!isSelfPlayer && draftEmailError ? 'border-red-500' : 'border-green-800 focus:border-rose-600'} ${isSelfPlayer ? 'opacity-80 cursor-not-allowed' : ''}`} />
+                    {!isSelfPlayer && draftEmailError && <p className="text-xs text-red-400 px-1">Podaj poprawny email</p>}
+                    {isSelfPlayer && <p className="text-[11px] text-green-200/40 px-1">Email konta jest ustawiany przy rejestracji (jak w Profilu).</p>}
                   </div>
                   <div className="flex gap-2 pt-0.5">
-                    <button onClick={() => confirmEdit(p.id)} disabled={!canSaveDraft}
+                    <button onClick={() => confirmEdit(p.id, isSelfPlayer)} disabled={isSelfPlayer ? !(draft.name.trim() && draftPhoneOkSelf) : !canSaveDraft}
                       className="flex-1 flex items-center justify-center gap-1.5 bg-rose-800 hover:bg-rose-900 disabled:opacity-40 disabled:cursor-not-allowed rounded-xl py-2 text-sm font-semibold transition-colors">
                       <IconCheck size={14} /> Zapisz
                     </button>
@@ -132,7 +158,7 @@ export function PlayersTab({ players, sessionPlayers, onAddPlayer, onUpdatePlaye
                   <div className="flex items-center gap-3">
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
-                        <p className="font-semibold text-white text-base leading-tight">{p.name}</p>
+                        <p className="font-semibold text-white text-base leading-tight">{displayName}</p>
                         {statusDotClass && (
                           <span
                             className={`inline-block w-2 h-2 rounded-full ${statusDotClass}`}
@@ -141,8 +167,9 @@ export function PlayersTab({ players, sessionPlayers, onAddPlayer, onUpdatePlaye
                           />
                         )}
                       </div>
-                      <p className="text-xs text-green-300/60">{p.phone || 'Brak numeru'}</p>
-                      {p.email && <p className="text-[11px] text-green-300/45 truncate">{p.email}</p>}
+                      <p className="text-xs text-green-300/60">{displayPhone}</p>
+                      {displayEmail ? <p className="text-[11px] text-green-300/45 truncate">{displayEmail}</p> : null}
+                      {isSelfPlayer && <p className="text-[10px] text-green-200/35">To Twoje konto — imię i numer jak w Profilu.</p>}
                     </div>
                     <button onClick={() => onAddToSession(p.id)} disabled={inSession}
                       className={`shrink-0 flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border transition-colors ${inSession ? 'bg-emerald-900/30 text-emerald-400 border-emerald-800 cursor-default' : 'bg-black/30 text-green-200 border-green-800 hover:bg-green-900/50'}`}>

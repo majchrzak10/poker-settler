@@ -7,8 +7,7 @@ import { summarizeSyncError } from '../../sync/errors';
 import { NetBadge } from '../history/historyUtils';
 import { IconRefresh, IconPencil } from '../../ui/icons';
 
-export function ProfileView({ user, history, players, pendingInvites, outgoingInvites, onAcceptInvite, onRejectInvite, onCancelInvite, onUnlinkPlayer, onSignOut, onRefresh, onRenameSelf, refreshBusy, syncMeta, onRetrySyncFailed, retryingFailedSaves, failedCloudSavesCount }) {
-  const [profile, setProfile] = useState(null);
+export function ProfileView({ user, accountProfile, reloadAccountProfile, history, players, pendingInvites, outgoingInvites, onAcceptInvite, onRejectInvite, onCancelInvite, onUnlinkPlayer, onSignOut, onRefresh, onRenameSelf, refreshBusy, syncMeta, onRetrySyncFailed, retryingFailedSaves, failedCloudSavesCount }) {
   const [editingName, setEditingName] = useState(false);
   const [draftName, setDraftName] = useState('');
   const [savingName, setSavingName] = useState(false);
@@ -23,38 +22,24 @@ export function ProfileView({ user, history, players, pendingInvites, outgoingIn
   const [showSyncDetails, setShowSyncDetails] = useState(false);
 
   useEffect(() => {
-    supabase.from('profiles').select('*').eq('id', user.id).single().then(({ data }) => {
-      setProfile(data);
-      setDraftName(data?.display_name || user.email?.split('@')[0] || '');
-      setDraftPhone(data?.phone ? formatPhone(data.phone) : '');
-    });
     supabase.from('participations').select('*').eq('user_id', user.id).order('session_date', { ascending: false }).then(({ data }) => {
       if (data) setMyGames(data);
     });
-    // Keep profile email aligned, but do not create partial rows.
     supabase.from('profiles').update({ email: (user.email || '').trim().toLowerCase() }).eq('id', user.id);
   }, [user.id]);
 
   useEffect(() => {
-    const onVis = () => {
-      if (document.visibilityState !== 'visible') return;
-      supabase.from('profiles').select('*').eq('id', user.id).maybeSingle().then(({ data }) => {
-        if (!data) return;
-        setProfile(data);
-        setDraftName(data.display_name || user.email?.split('@')[0] || '');
-        setDraftPhone(data.phone ? formatPhone(data.phone) : '');
-      });
-    };
-    document.addEventListener('visibilitychange', onVis);
-    return () => document.removeEventListener('visibilitychange', onVis);
-  }, [user.id, user.email]);
+    if (!accountProfile) return;
+    setDraftName(accountProfile.display_name || user.email?.split('@')[0] || '');
+    setDraftPhone(accountProfile.phone ? formatPhone(accountProfile.phone) : '');
+  }, [accountProfile, user.email]);
 
   const buildProfilePayload = (patch = {}) => {
-    const safeName = (patch.display_name ?? draftName ?? profile?.display_name ?? user.email?.split('@')[0] ?? 'Gracz').trim() || 'Gracz';
-    const safeEmailRaw = (profile?.email ?? user.email ?? '').trim().toLowerCase();
+    const safeName = (patch.display_name ?? draftName ?? accountProfile?.display_name ?? user.email?.split('@')[0] ?? 'Gracz').trim() || 'Gracz';
+    const safeEmailRaw = (accountProfile?.email ?? user.email ?? '').trim().toLowerCase();
     const safePhoneRaw = patch.phone !== undefined
       ? patch.phone
-      : (draftPhone ? draftPhone.replace(/\s/g, '') : (profile?.phone ?? null));
+      : (draftPhone ? draftPhone.replace(/\s/g, '') : (accountProfile?.phone ?? null));
     const safePhone = safePhoneRaw ? String(safePhoneRaw).replace(/\s/g, '') : null;
     return {
       id: user.id,
@@ -83,9 +68,9 @@ export function ProfileView({ user, history, players, pendingInvites, outgoingIn
       setNameSaveError('Nie udało się zapisać. Spróbuj ponownie.');
       return;
     }
-    setProfile(prev => ({ ...prev, display_name: nextName }));
     setEditingName(false);
     if (onRenameSelf) await onRenameSelf(nextName);
+    await reloadAccountProfile();
     if (onRefresh) await onRefresh();
   };
 
@@ -101,8 +86,8 @@ export function ProfileView({ user, history, players, pendingInvites, outgoingIn
       return;
     }
     await supabase.from('players').update({ phone: digits }).eq('owner_id', user.id).eq('linked_user_id', user.id);
-    setProfile(prev => ({ ...prev, phone: digits }));
     setEditingPhone(false);
+    await reloadAccountProfile();
     if (onRefresh) await onRefresh();
   };
 
@@ -111,7 +96,7 @@ export function ProfileView({ user, history, players, pendingInvites, outgoingIn
     [myGames]
   );
 
-  const displayName = profile?.display_name || user.email?.split('@')[0] || 'Gracz';
+  const displayName = accountProfile?.display_name || user.email?.split('@')[0] || 'Gracz';
 
   return (
     <div className="p-4 space-y-5 pb-6">
@@ -149,13 +134,13 @@ export function ProfileView({ user, history, players, pendingInvites, outgoingIn
               )}
             </div>
             <div className="mt-0.5">
-              <p className="text-xs text-green-200/50 truncate">{profile?.email || user.email}</p>
+              <p className="text-xs text-green-200/50 truncate">{accountProfile?.email || user.email}</p>
               <p className="text-[11px] text-green-200/35">Email konta jest stały po rejestracji.</p>
             </div>
             {!editingPhone ? (
               <div className="flex items-center gap-1.5 mt-0.5">
                 <p className="text-xs text-green-200/40 truncate">
-                  {profile?.phone ? formatPhone(profile.phone) : 'Brak numeru telefonu'}
+                  {accountProfile?.phone ? formatPhone(accountProfile.phone) : 'Brak numeru telefonu'}
                 </p>
                 <button onClick={() => { setEditingPhone(true); setPhoneSaveError(''); }}
                   className="text-green-800 hover:text-green-400 transition-colors shrink-0">
@@ -172,7 +157,7 @@ export function ProfileView({ user, history, players, pendingInvites, outgoingIn
                     className="shrink-0 text-xs bg-rose-800 hover:bg-rose-900 disabled:opacity-40 rounded-xl px-3 py-1.5 font-semibold transition-colors">
                     {savingPhone ? '...' : 'Zapisz'}
                   </button>
-                  <button onClick={() => { setEditingPhone(false); setDraftPhone(profile?.phone ? formatPhone(profile.phone) : ''); }}
+                  <button onClick={() => { setEditingPhone(false); setDraftPhone(accountProfile?.phone ? formatPhone(accountProfile.phone) : ''); }}
                     className="shrink-0 text-green-200/50 hover:text-white transition-colors px-1">✕</button>
                 </div>
                 {phoneSaveError && <p className="text-xs text-rose-400 px-1">{phoneSaveError}</p>}
@@ -193,7 +178,7 @@ export function ProfileView({ user, history, players, pendingInvites, outgoingIn
                 className="shrink-0 text-sm bg-rose-800 hover:bg-rose-900 disabled:opacity-40 rounded-xl px-4 py-2 font-semibold transition-colors">
                 {savingName ? '...' : 'Zapisz'}
               </button>
-              <button onClick={() => { setEditingName(false); setDraftName(profile?.display_name || ''); setNameSaveError(''); }}
+              <button onClick={() => { setEditingName(false); setDraftName(accountProfile?.display_name || user.email?.split('@')[0] || ''); setNameSaveError(''); }}
                 className="shrink-0 text-green-200/50 hover:text-white transition-colors px-1">✕</button>
             </div>
             {nameSaveError && <p className="text-xs text-rose-400 px-1">{nameSaveError}</p>}
