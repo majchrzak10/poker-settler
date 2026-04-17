@@ -1416,6 +1416,20 @@ function ProfileView({ user, history, players, onUnlinkPlayer, onSignOut, syncMe
     supabase.from('profiles').upsert({ id: user.id, email: user.email });
   }, [user.id]);
 
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState !== 'visible') return;
+      supabase.from('profiles').select('*').eq('id', user.id).maybeSingle().then(({ data }) => {
+        if (!data) return;
+        setProfile(data);
+        setDraftName(data.display_name || user.email?.split('@')[0] || '');
+        setDraftPhone(data.phone ? formatPhone(data.phone) : '');
+      });
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, [user.id, user.email]);
+
   const saveDisplayName = async () => {
     if (!draftName.trim()) return;
     setSavingName(true);
@@ -1437,7 +1451,8 @@ function ProfileView({ user, history, players, onUnlinkPlayer, onSignOut, syncMe
     const { error } = await supabase.from('profiles').upsert({ id: user.id, phone: digits });
     setSavingPhone(false);
     if (error) {
-      setPhoneSaveError('Nie udało się zapisać numeru. Spróbuj ponownie.');
+      const hint = (error.message || '').replace(/\s+/g, ' ').trim();
+      setPhoneSaveError(hint ? hint.slice(0, 200) : 'Nie udało się zapisać numeru. Spróbuj ponownie.');
       return;
     }
     setProfile(prev => ({ ...prev, phone: digits }));
@@ -1636,33 +1651,42 @@ function ProfileView({ user, history, players, onUnlinkPlayer, onSignOut, syncMe
       </div>
 
       {localHasData && !migrateDone && (
-        <div className="bg-yellow-900/20 border border-yellow-800/50 rounded-2xl p-4 space-y-3">
-          <p className="text-sm text-yellow-300 font-semibold">Znaleziono lokalne dane</p>
-          <p className="text-xs text-yellow-200/60">Masz graczy i historię zapisaną lokalnie. Zaimportować do chmury?</p>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-yellow-800/40 bg-yellow-900/15 px-3 py-2.5">
+          <p className="text-xs text-yellow-200/85 flex-1 min-w-[12rem]">Lokalna lista graczy / historia — możesz je zaimportować do konta.</p>
           <button onClick={handleMigrate} disabled={migrateLoading}
-            className="w-full bg-yellow-700 hover:bg-yellow-800 disabled:opacity-50 rounded-xl py-2.5 text-sm font-semibold transition-colors">
-            {migrateLoading ? 'Importowanie...' : 'Importuj do chmury'}
+            className="shrink-0 text-xs bg-yellow-700 hover:bg-yellow-800 disabled:opacity-50 rounded-lg px-3 py-1.5 font-semibold transition-colors">
+            {migrateLoading ? '…' : 'Importuj'}
           </button>
-          {migrateError && <p className="text-xs text-rose-400">{migrateError}</p>}
+          {migrateError && <p className="w-full text-xs text-rose-400">{migrateError}</p>}
         </div>
       )}
 
-      <div className="bg-black/30 border border-green-900 rounded-2xl p-4 space-y-2">
-        <h2 className="text-base font-bold text-white">Synchronizacja z chmurą</h2>
-        <p className="text-xs text-green-200/50">
-          Ostatnia próba: {syncMeta?.lastAttempt ? formatDate(syncMeta.lastAttempt) : '—'} · Ostatni sukces: {syncMeta?.lastSuccess ? formatDate(syncMeta.lastSuccess) : '—'}
-        </p>
-        {syncMeta?.lastError && <p className="text-xs text-rose-400 break-words">{syncMeta.lastError}</p>}
-        {failedCloudSavesCount > 0 && (
-          <div className="flex items-center justify-between gap-2 pt-1">
-            <p className="text-xs text-yellow-200/80">{failedCloudSavesCount} {pluralPL(failedCloudSavesCount, 'sesja czeka', 'sesje czekają', 'sesji czeka')} na zapis.</p>
-            <button type="button" onClick={onRetrySyncFailed} disabled={retryingFailedSaves}
-              className="text-xs bg-yellow-700 hover:bg-yellow-800 disabled:opacity-50 rounded-lg px-3 py-1.5 font-semibold transition-colors">
-              {retryingFailedSaves ? '...' : 'Ponów'}
-            </button>
-          </div>
-        )}
-      </div>
+      <details className="bg-black/30 border border-green-900 rounded-2xl group">
+        <summary className="cursor-pointer list-none px-4 py-3 flex flex-wrap items-center justify-between gap-2 [&::-webkit-details-marker]:hidden">
+          <span className="text-sm font-semibold text-white">Chmura</span>
+          {!syncMeta?.lastError && failedCloudSavesCount === 0 ? (
+            <span className="text-xs text-emerald-400/90">OK{syncMeta?.lastSuccess ? ` · ${formatDate(syncMeta.lastSuccess)}` : ''}</span>
+          ) : (
+            <span className="text-xs text-amber-200/90">Wymaga uwagi</span>
+          )}
+          <span className="text-xs text-green-200/40 group-open:hidden ml-auto">Szczegóły</span>
+        </summary>
+        <div className="px-4 pb-4 pt-0 space-y-2 border-t border-green-900/40">
+          <p className="text-xs text-green-200/50 pt-3">
+            Ostatnia próba: {syncMeta?.lastAttempt ? formatDate(syncMeta.lastAttempt) : '—'} · Ostatni sukces zapisu: {syncMeta?.lastSuccess ? formatDate(syncMeta.lastSuccess) : '—'}
+          </p>
+          {syncMeta?.lastError && <p className="text-xs text-rose-400 break-words">{syncMeta.lastError}</p>}
+          {failedCloudSavesCount > 0 && (
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <p className="text-xs text-yellow-200/80">{failedCloudSavesCount} {pluralPL(failedCloudSavesCount, 'sesja czeka', 'sesje czekają', 'sesji czeka')} na zapis — ponawiamy automatycznie, możesz też kliknąć.</p>
+              <button type="button" onClick={onRetrySyncFailed} disabled={retryingFailedSaves}
+                className="text-xs bg-yellow-700 hover:bg-yellow-800 disabled:opacity-50 rounded-lg px-3 py-1.5 font-semibold transition-colors shrink-0">
+                {retryingFailedSaves ? '...' : 'Ponów'}
+              </button>
+            </div>
+          )}
+        </div>
+      </details>
 
       <div>
         <h2 className="text-sm font-semibold uppercase tracking-wider text-green-200/60 mb-3">Znajomi ({friends.length})</h2>
@@ -1878,6 +1902,7 @@ function App() {
       console.warn('refreshCloudData players/sessions', playersRes.error, sessionsRes.error);
       return;
     }
+    setSyncMeta(prev => (prev.lastError ? { ...prev, lastError: null } : prev));
     if (sharedRes.error) console.warn('refreshCloudData participations', sharedRes.error);
 
     const pData = playersRes.data;
@@ -1979,7 +2004,7 @@ function App() {
 
     const poll = setInterval(() => {
       if (!document.hidden) scheduleRefresh();
-    }, 12000);
+    }, 6000);
 
     const onFocus = () => scheduleRefresh();
     const onOnline = () => scheduleRefresh();
@@ -2137,6 +2162,8 @@ function App() {
     if (error) {
       setPlayers(prev => prev.filter(p => p.id !== id));
       notifyCloudFailure(error.message);
+    } else {
+      void refreshCloudData();
     }
   };
   const updatePlayer = async (id, name, phone) => {
@@ -2147,6 +2174,8 @@ function App() {
     if (error && prevRow) {
       setPlayers(prev => prev.map(p => p.id === id ? prevRow : p));
       notifyCloudFailure(error.message);
+    } else if (!error) {
+      void refreshCloudData();
     }
   };
   const linkPlayer = async (playerId, input) => {
@@ -2170,9 +2199,16 @@ function App() {
       return 'Podaj adres email, numer telefonu lub ID konta z zakładki Profil.';
     }
     if (!profileId) {
-      return isUUID
-        ? 'Nie znaleziono konta z tym ID — upewnij się, że znajomy podał ID z Profilu.'
-        : 'Nie znaleziono konta. Znajomy musi mieć konto w Poker Settler z potwierdzonym adresem email.';
+      if (isUUID) {
+        return 'Nie znaleziono konta z tym ID — upewnij się, że znajomy podał ID z Profilu.';
+      }
+      if (isEmail) {
+        return 'Nie znaleziono konta z tym adresem email. Znajomy musi być zarejestrowany — wtedy email trafia do profilu i można go wyszukać.';
+      }
+      if (isPhone) {
+        return 'Nie znaleziono konta z tym numerem. Znajomy musi wpisać ten sam numer w Profilu (9 cyfr).';
+      }
+      return 'Nie znaleziono konta.';
     }
     if (profileId === user.id) {
       return 'Nie możesz połączyć gracza z własnym kontem.';
@@ -2199,6 +2235,7 @@ function App() {
       notifyCloudFailure(upErr.message);
       return 'Nie udało się dokończyć powiązania. Spróbuj ponownie.';
     }
+    void refreshCloudData();
     return null;
   };
   const unlinkPlayer = async (playerId) => {
@@ -2221,6 +2258,7 @@ function App() {
         .eq('linked_user_id', user.id);
       if (revErr) notifyCloudFailure(revErr.message);
     }
+    void refreshCloudData();
   };
   const removePlayer = async id => {
     const prevP = players;
@@ -2233,6 +2271,8 @@ function App() {
       setPlayers(prevP);
       setSessionPlayers(prevSp);
       notifyCloudFailure(error.message);
+    } else {
+      void refreshCloudData();
     }
   };
   const addToSession = playerId => {
@@ -2306,6 +2346,7 @@ function App() {
       try {
         await persistSessionSaveCloud(sessionRow, sessionPlayersRows, transferRows, participationRows);
         removeFailedCloudSave(sessionId);
+        void refreshCloudData();
         recordSyncSuccess();
         setSaveStatus({ type: 'ok', message: 'Sesja zapisana w chmurze.' });
       } catch (e) {
@@ -2361,6 +2402,7 @@ function App() {
         }
       }
       await persistSessionUpdateCloud(sessionRow, sessionPlayersRows, transferRows, participationRows);
+      void refreshCloudData();
       recordSyncSuccess();
       return null;
     } catch (e) {
@@ -2398,6 +2440,8 @@ function App() {
     if (e4 && prevEntry) {
       setHistory(prev => [...prev, prevEntry].sort((a, b) => new Date(a.date) - new Date(b.date)));
       notifyCloudFailure(e4.message);
+    } else if (!e4) {
+      void refreshCloudData();
     }
   };
   const handleSignOut = async () => {

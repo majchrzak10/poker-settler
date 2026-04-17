@@ -55,11 +55,17 @@ Uruchamia `node --test` na [test/settlement.test.js](test/settlement.test.js) (f
 
 ## Deploy (Netlify)
 
-W repozytorium jest **`netlify.toml`** z `publish = "."` — katalog główny (m.in. `index.html`) trafia na hosting bez kroku build.
+W repozytorium jest **`netlify.toml`** z `publish = "."` — katalog główny (m.in. `index.html`) trafia na hosting **bez kroku build**.
+
+**Checklist w Netlify (Dashboard → site → Build & deploy):**
+
+1. **Continuous deployment** — repozytorium GitHub połączone, produkcja = gałąź **`main`**.
+2. **Build settings** — *Build command* puste (Netlify czyta `netlify.toml`), *Publish directory* **`.`** lub puste (root).
+3. Po zapisie ustawień każdy **`git push origin main`** powinien pokazać nowy deploy w zakładce **Deploys**.
 
 ### Netlify podpięte do GitHuba (zalecane)
 
-Po **Import from Git** każdy push na **`main`** zwykle uruchamia nowy deploy automatycznie.
+Po **Import from Git** każdy push na **`main`** uruchamia deploy automatycznie (to jest domyślna ścieżka — nie trzeba GitHub Actions).
 
 ```bash
 git add -A

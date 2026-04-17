@@ -1,3 +1,18 @@
-# Statyczna PWA — brak kroku build; serwowany jest cały katalog (index.html).
+# Poker Settler — statyczna PWA (index.html, lib/). Netlify publikuje cały katalog główny.
+#
+# Wdrożenie produkcyjne (zalecane):
+#   Netlify Dashboard → Add new site → Import an existing project → GitHub → to repozytorium
+#   Branch: main | Build command: (puste) | Publish directory: . (kropka)
+#   Po połączeniu każdy push na main uruchamia deploy z tego pliku.
+#
+# Alternatywa: netlify deploy --prod --dir . (CLI) albo workflow Actions (ręczny trigger).
+
 [build]
   publish = "."
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"

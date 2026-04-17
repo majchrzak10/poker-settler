@@ -1,8 +1,9 @@
-# Opcjonalnie: ręczne wdrożenie z zakładki Actions → Run workflow.
-# Wymaga sekretów: NETLIFY_AUTH_TOKEN, NETLIFY_SITE_ID (Settings → Secrets → Actions).
+# Opcjonalny deploy z GitHub Actions (Run workflow). Wymaga sekretów:
+#   NETLIFY_AUTH_TOKEN, NETLIFY_SITE_ID (repo → Settings → Secrets and variables → Actions).
 #
-# Standardowe podejście bez Actions: w Netlify „Add site → Import from Git” i wybierz to repo —
-# wtedy każdy push na main buduje stronę automatycznie (netlify.toml jest w katalogu głównym).
+# Główna ścieżka: Netlify → Import from Git → to repo → branch main.
+# Wtedy Netlify sam deployuje przy każdym pushu — nie uruchamiaj tego workflow równolegle,
+# żeby uniknąć podwójnego wdrożenia.
 
 name: Deploy to Netlify (manual)
 

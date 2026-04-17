@@ -1,3 +1,6 @@
 .DS_Store
 *.local
 node_modules/
+
+# Netlify CLI (lokalne linkowanie site)
+.netlify/
