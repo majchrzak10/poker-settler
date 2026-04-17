@@ -119,6 +119,11 @@ function isRpcMissingError(err) {
   return err?.code === 'PGRST202' || err?.code === '42883' || /save_session_atomic|update_session_atomic|function.*does not exist/i.test(m);
 }
 
+function isFriendLinkRpcMissing(err) {
+  const m = (err?.message || '') + (err?.details || '');
+  return err?.code === 'PGRST202' || err?.code === '42883' || /complete_friend_player_link|remove_friend_player_link|function.*does not exist/i.test(m);
+}
+
 /** Tabela live_session_state nie wdrożona (migracja 002) — PostgREST zwraca m.in. PGRST205; komunikat bywa obcięty („public.live…”). */
 function isMissingLiveSessionTableError(err) {
   if (!err) return false;
@@ -681,7 +686,7 @@ function PlayersTab({ players, sessionPlayers, onAddPlayer, onUpdatePlayer, onRe
                       ) : (
                         <>
                           <p className="text-[11px] text-green-200/45 leading-snug">
-                            Wpisz email, numer telefonu lub ID konta znajomego (z jego zakładki Profil). Znajomy musi mieć konto w Poker Settler.
+                            Dodaj znajomego jak w social media: wpisz ten sam email co przy logowaniu, numer z Profilu lub ID konta. Obie osoby mają mieć konto tutaj.
                           </p>
                           <div className="flex gap-2">
                             <input value={linkEmail} onChange={e => { setLinkEmail(e.target.value); setLinkMsg(''); }}
@@ -1661,32 +1666,22 @@ function ProfileView({ user, history, players, onUnlinkPlayer, onSignOut, syncMe
         </div>
       )}
 
-      <details className="bg-black/30 border border-green-900 rounded-2xl group">
-        <summary className="cursor-pointer list-none px-4 py-3 flex flex-wrap items-center justify-between gap-2 [&::-webkit-details-marker]:hidden">
-          <span className="text-sm font-semibold text-white">Chmura</span>
-          {!syncMeta?.lastError && failedCloudSavesCount === 0 ? (
-            <span className="text-xs text-emerald-400/90">OK{syncMeta?.lastSuccess ? ` · ${formatDate(syncMeta.lastSuccess)}` : ''}</span>
-          ) : (
-            <span className="text-xs text-amber-200/90">Wymaga uwagi</span>
-          )}
-          <span className="text-xs text-green-200/40 group-open:hidden ml-auto">Szczegóły</span>
-        </summary>
-        <div className="px-4 pb-4 pt-0 space-y-2 border-t border-green-900/40">
-          <p className="text-xs text-green-200/50 pt-3">
-            Ostatnia próba: {syncMeta?.lastAttempt ? formatDate(syncMeta.lastAttempt) : '—'} · Ostatni sukces zapisu: {syncMeta?.lastSuccess ? formatDate(syncMeta.lastSuccess) : '—'}
-          </p>
-          {syncMeta?.lastError && <p className="text-xs text-rose-400 break-words">{syncMeta.lastError}</p>}
+      {(syncMeta?.lastError || failedCloudSavesCount > 0) && (
+        <div className="bg-amber-950/35 border border-amber-800/45 rounded-2xl p-4 space-y-2">
+          <p className="text-xs font-semibold text-amber-200/90">Uwaga — synchronizacja sesji</p>
+          {syncMeta?.lastError && <p className="text-xs text-rose-300/95 break-words">{syncMeta.lastError}</p>}
           {failedCloudSavesCount > 0 && (
             <div className="flex items-center justify-between gap-2 flex-wrap">
-              <p className="text-xs text-yellow-200/80">{failedCloudSavesCount} {pluralPL(failedCloudSavesCount, 'sesja czeka', 'sesje czekają', 'sesji czeka')} na zapis — ponawiamy automatycznie, możesz też kliknąć.</p>
+              <p className="text-xs text-amber-100/85">{failedCloudSavesCount} {pluralPL(failedCloudSavesCount, 'sesja nie doszła do chmury', 'sesje nie doszły do chmury', 'sesji nie doszło do chmury')}.</p>
               <button type="button" onClick={onRetrySyncFailed} disabled={retryingFailedSaves}
-                className="text-xs bg-yellow-700 hover:bg-yellow-800 disabled:opacity-50 rounded-lg px-3 py-1.5 font-semibold transition-colors shrink-0">
-                {retryingFailedSaves ? '...' : 'Ponów'}
+                className="text-xs bg-amber-800 hover:bg-amber-700 disabled:opacity-50 rounded-lg px-3 py-1.5 font-semibold transition-colors shrink-0">
+                {retryingFailedSaves ? '...' : 'Ponów zapis'}
               </button>
             </div>
           )}
         </div>
-      </details>
+      )}
+      <p className="text-[11px] text-green-200/35 px-1">Konto i historia sesji są przechowywane w chmurze po zalogowaniu.</p>
 
       <div>
         <h2 className="text-sm font-semibold uppercase tracking-wider text-green-200/60 mb-3">Znajomi ({friends.length})</h2>
@@ -2215,25 +2210,17 @@ function App() {
     }
     const prevRow = players.find(p => p.id === playerId);
     setPlayers(prev => prev.map(p => p.id === playerId ? { ...p, linked_user_id: profileId } : p));
-    const { error: uErr } = await supabase.from('players').update({ linked_user_id: profileId }).eq('id', playerId);
-    if (uErr) {
+    const { error: rpcErr } = await supabase.rpc('complete_friend_player_link', {
+      p_player_id: playerId,
+      p_friend_user_id: profileId,
+    });
+    if (rpcErr) {
       if (prevRow) setPlayers(prev => prev.map(p => p.id === playerId ? prevRow : p));
-      notifyCloudFailure(uErr.message);
-      return 'Nie udało się zapisać powiązania w chmurze.';
-    }
-    const { data: myProfile } = await supabase.from('profiles').select('display_name').eq('id', user.id).maybeSingle();
-    const myName = myProfile?.display_name || user.email?.split('@')[0] || 'Gracz';
-    const { error: upErr } = await supabase.from('players').upsert({
-      id: generateId(),
-      owner_id: profileId,
-      linked_user_id: user.id,
-      name: myName,
-    }, { onConflict: 'owner_id,linked_user_id', ignoreDuplicates: true });
-    if (upErr) {
-      await supabase.from('players').update({ linked_user_id: null }).eq('id', playerId);
-      if (prevRow) setPlayers(prev => prev.map(p => p.id === playerId ? prevRow : p));
-      notifyCloudFailure(upErr.message);
-      return 'Nie udało się dokończyć powiązania. Spróbuj ponownie.';
+      notifyCloudFailure(rpcErr.message);
+      if (isFriendLinkRpcMissing(rpcErr)) {
+        return 'Serwer nie ma jeszcze funkcji powiązań — uruchom migrację 009 (SQL) w Supabase.';
+      }
+      return (rpcErr.message || '').trim() || 'Nie udało się połączyć znajomego. Spróbuj ponownie.';
     }
     void refreshCloudData();
     return null;
@@ -2243,20 +2230,23 @@ function App() {
     const linkedUserId = prevRow?.linked_user_id || null;
     setPlayers(prev => prev.map(p => p.id === playerId ? { ...p, linked_user_id: null } : p));
     if (!user) return;
-    const { error } = await supabase.from('players').update({ linked_user_id: null }).eq('id', playerId);
-    if (error && prevRow) {
-      setPlayers(prev => prev.map(p => p.id === playerId ? prevRow : p));
-      notifyCloudFailure(error.message);
-      return;
-    }
-    // Keep friendship relation symmetric by removing reverse auto-created link.
-    if (linkedUserId && user?.id) {
-      const { error: revErr } = await supabase
-        .from('players')
-        .delete()
-        .eq('owner_id', linkedUserId)
-        .eq('linked_user_id', user.id);
-      if (revErr) notifyCloudFailure(revErr.message);
+    const { error: rpcErr } = await supabase.rpc('remove_friend_player_link', { p_player_id: playerId });
+    if (rpcErr) {
+      if (!isFriendLinkRpcMissing(rpcErr)) {
+        if (prevRow) setPlayers(prev => prev.map(p => p.id === playerId ? prevRow : p));
+        notifyCloudFailure(rpcErr.message);
+        return;
+      }
+      const { error } = await supabase.from('players').update({ linked_user_id: null }).eq('id', playerId);
+      if (error && prevRow) {
+        setPlayers(prev => prev.map(p => p.id === playerId ? prevRow : p));
+        notifyCloudFailure(error.message);
+        return;
+      }
+      if (linkedUserId && user?.id) {
+        const { error: revErr } = await supabase.from('players').delete().eq('owner_id', linkedUserId).eq('linked_user_id', user.id);
+        if (revErr) notifyCloudFailure(revErr.message);
+      }
     }
     void refreshCloudData();
   };
@@ -2471,8 +2461,9 @@ function App() {
               <p className="text-xs text-green-200/60 mt-0.5 leading-snug">{SCREEN_META[tab]}</p>
             )}
           </div>
-          <span className="text-xs text-green-200/60 bg-black/30 rounded-full px-2.5 py-1 shrink-0 tabular-nums">
-            {sessionPlayers.length} {sessionPlayers.length === 1 ? 'gracz' : 'graczy'}
+          <span className="text-xs text-green-200/60 bg-black/30 rounded-full px-2.5 py-1 shrink-0 text-right leading-tight min-w-[3rem]">
+            <span className="block font-semibold tabular-nums">{tab === 'players' ? players.length : sessionPlayers.length}</span>
+            <span className="block text-[10px] text-green-200/45 font-normal">{tab === 'players' ? 'w liście' : 'w sesji'}</span>
           </span>
         </header>
 

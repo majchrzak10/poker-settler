@@ -23,16 +23,10 @@ Kwoty w Supabase są przechowywane jako **centy (integer)**. UI pracuje na PLN (
    const SUPABASE_URL = 'https://TWOJ_PROJEKT.supabase.co';
    const SUPABASE_KEY = 'sb_publishable_...';  // anon/public key
    ```
-3. Uruchom migracje w kolejności w **SQL Editor** (Supabase Dashboard):
-   ```
-   supabase/migrations/000_profiles_players_participations.sql
-   supabase/migrations/001_session_atomic.sql
-   supabase/migrations/002_live_session_state.sql
-   supabase/migrations/003_profile_on_signup.sql
-   ```
-   Migracja **003** dodaje trigger: przy rejestracji od razu powstaje wiersz w `profiles` z emailem (łączenie graczy po adresie działa nawet przed pierwszym logowaniem). Jeśli masz już własny trigger z panelu Supabase, uruchom skrypt świadomie (może nadpisać funkcję `handle_new_user`).
-4. Włącz Realtime dla tabel: `players`, `sessions`, `session_players`, `transfers`, `participations`
-   — Dashboard → Database → Replication → zaznacz tabele.
+3. Uruchom migracje **po kolei** w **SQL Editor** (Supabase Dashboard), pliki z `supabase/migrations/`:
+   `000` … `009` (w tym **007** RLS profili/graczy, **008** Realtime, **009** funkcje `complete_friend_player_link` / `remove_friend_player_link` — bez **009** powiązania znajomych z klienta mogą kończyć się błędem RLS).
+   Migracja **003** dodaje trigger: przy rejestracji od razu powstaje wiersz w `profiles` z emailem. Jeśli masz już własny trigger z panelu Supabase, uruchom skrypt świadomie (może nadpisać funkcję `handle_new_user`).
+4. Realtime: migracja **008** dopisuje tabele do publikacji `supabase_realtime`; jeśli wdrażasz ręcznie starszą bazę, w Dashboard → **Database → Publications** upewnij się, że te tabele są w replikacji (jak w **008**).
 
 ## Lokalny development
 
