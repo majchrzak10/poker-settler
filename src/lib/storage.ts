@@ -1,0 +1,54 @@
+import { useEffect } from 'react';
+
+export function generateId() {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+}
+
+export function loadLS<T>(key: string, fallback: T): T {
+  try {
+    const item = localStorage.getItem(key);
+    return item ? JSON.parse(item) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+export function saveLS(key: string, value: unknown) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    /* ignore */
+  }
+}
+
+export function useDebouncedLocalStorage(key: string, value: unknown, delay = 220) {
+  useEffect(() => {
+    const timer = setTimeout(() => saveLS(key, value), delay);
+    return () => clearTimeout(timer);
+  }, [key, value, delay]);
+}
+
+export function normalizeDraftSessionPlayers(rows: unknown[]) {
+  return (rows || []).map((sp: Record<string, unknown>) => ({
+    playerId: sp.playerId,
+    buyIns: Array.isArray(sp.buyIns) ? sp.buyIns.map((n: unknown) => Number(n) || 0) : [],
+    cashOut: typeof sp.cashOut === 'string' ? sp.cashOut : String(sp.cashOut ?? ''),
+  }));
+}
+
+export function buildDraftHash(defaultBuyIn: number, sessionPlayers: unknown[]) {
+  return JSON.stringify({
+    defaultBuyIn: Number(defaultBuyIn) || 0,
+    sessionPlayers: normalizeDraftSessionPlayers(sessionPlayers),
+  });
+}
+
+export function isoToMs(iso: string | null | undefined) {
+  if (!iso) return 0;
+  const t = new Date(iso).getTime();
+  return Number.isNaN(t) ? 0 : t;
+}

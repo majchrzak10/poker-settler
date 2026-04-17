@@ -95,9 +95,14 @@ netlify deploy --prod --dir dist
 ```
 index.html                        ← punkt wejścia Vite
 src/
-  main.tsx                        ← mount React + PWA
-  App.tsx                         ← aplikacja (Supabase, zakładki)
-  lib/settlement.ts               ← rozliczenia (wspólne z testami)
+  main.tsx                        ← mount + PWA + telemetria (initClientTelemetry)
+  App.tsx                         ← stan, sync chmury, zakładki
+  app/keys.ts, app/navigation.tsx
+  auth/useAuth.tsx
+  features/{auth,players,session,settlement,history,profile}/*.tsx
+  lib/{settlement,supabase,storage,format,historyShared}.ts
+  sync/{telemetry,errors,sessionRpc}.ts
+  ui/icons.tsx
   lib/settlement.test.ts          ← Vitest
 vite.config.ts
 tailwind.config.js

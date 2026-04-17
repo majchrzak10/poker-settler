@@ -10,7 +10,7 @@
 
 **Poker Settler** — polskojęzyczna PWA do rozliczania puli po grze w pokera: buy-iny, cash-outy, minimalna lista przelewów (`settleDebts` w `src/lib/settlement.ts`).
 
-- **UI:** Vite + React 18 + TypeScript — główny komponent w `src/App.tsx` (docelowo podział na moduły); build statyczny do `dist/`.
+- **UI:** Vite + React 18 + TypeScript — logika zakładek w `src/features/*`, stan i sync w `src/App.tsx`, build do `dist/`.
 - **Backend:** Supabase (Auth + Postgres + Realtime). Kwoty w bazie: **centy (integer)**; w UI: PLN float — konwersja przy granicy (`plnToCents` / odczyt).
 - **Stan:** React w `App`, props w dół; persystencja: **localStorage + Supabase** (dual-write przy zalogowanym użytkowniku).
 

@@ -13,13 +13,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```
 index.html              ← Vite HTML shell (root)
 src/
-├── main.tsx            ← createRoot, PWA head inject, StrictMode
-├── App.tsx             ← cała aplikacja (duży plik; docelowo podział na features/)
-├── config.ts           ← Supabase URL + anon key (import.meta.env.VITE_*)
-├── index.css           ← Tailwind + global styles
-├── pwa.ts              ← manifest + icons (inline SVG base64)
-└── lib/
-    └── settlement.ts   ← plnToCents, settleDebts, pluralPL, formatPln
+├── main.tsx            ← createRoot, PWA, initClientTelemetry, StrictMode
+├── App.tsx             ← stan globalny, sync Supabase, routing zakładek
+├── config.ts           ← Supabase URL + anon key
+├── index.css / pwa.ts
+├── app/                ← keys.ts, navigation.tsx (TABS / SCREEN_META)
+├── auth/useAuth.tsx
+├── features/
+│   ├── auth/AuthScreens.tsx
+│   ├── players/PlayersTab.tsx
+│   ├── session/SessionTab.tsx
+│   ├── settlement/SettlementTab.tsx
+│   ├── history/HistoryTab.tsx + historyUtils.tsx
+│   └── profile/ProfileView.tsx
+├── lib/                ← supabase.ts, settlement.ts, storage, format, historyShared
+├── sync/               ← telemetry, errors, sessionRpc (helpers pod zapis sesji)
+└── ui/icons.tsx        ← ikony SVG
 ```
 
 - **Build:** `npm run build` → `dist/` (Netlify publish directory).

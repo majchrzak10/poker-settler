@@ -3,8 +3,10 @@ import { createRoot } from 'react-dom/client';
 import './index.css';
 import App from './App';
 import { injectPwaHead } from './pwa';
+import { initClientTelemetry } from './sync/telemetry';
 
 injectPwaHead();
+initClientTelemetry();
 
 declare global {
   interface Window {
