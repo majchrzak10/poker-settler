@@ -1,24 +1,94 @@
-// @ts-nocheck
-import React, { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
+import type { ChangeEvent } from 'react';
+import type { User } from '@supabase/supabase-js';
 import { supabase } from '../../lib/supabase';
 import { pluralPL } from '../../lib/settlement';
 import { formatPhone, formatDate } from '../../lib/format';
 import { summarizeSyncError } from '../../sync/errors';
 import { IconRefresh, IconPencil } from '../../ui/icons';
 
-const OUT_INVITE_STATUS_LABEL = {
+interface Player {
+  linked_user_id: string | null;
+  phone: string | null;
+  name: string;
+}
+
+interface PendingInvite {
+  id: string;
+  invitee_email: string;
+  created_at: string;
+}
+
+interface OutgoingInvite {
+  id: string;
+  invitee_email: string;
+  status: 'pending' | 'accepted' | 'rejected' | 'cancelled';
+}
+
+interface AccountProfile {
+  display_name: string | null;
+  email: string | null;
+  phone: string | null;
+}
+
+interface SyncMeta {
+  lastError?: string | null;
+}
+
+interface ProfileViewProps {
+  user: User;
+  accountProfile: AccountProfile | null;
+  reloadAccountProfile: () => Promise<void>;
+  history: unknown[];
+  players: Player[];
+  pendingInvites: PendingInvite[];
+  outgoingInvites: OutgoingInvite[];
+  onAcceptInvite: (id: string) => Promise<string | null>;
+  onRejectInvite: (id: string) => Promise<string | null>;
+  onCancelInvite: (id: string) => Promise<string | null>;
+  onUnlinkPlayer: (id: string) => Promise<void>;
+  onSignOut: () => void;
+  onRefresh?: () => Promise<void>;
+  onRenameSelf?: (name: string) => Promise<void>;
+  refreshBusy: boolean;
+  syncMeta: SyncMeta | null;
+  onRetrySyncFailed: () => void;
+  retryingFailedSaves: boolean;
+  failedCloudSavesCount: number;
+}
+
+const OUT_INVITE_STATUS_LABEL: Record<string, string> = {
   pending: 'oczekuje',
   accepted: 'zaakcept.',
   rejected: 'odrzucono',
   revoked: 'cofnięto',
   invited: 'wysłane',
 };
-function shortOutgoingStatus(status) {
+function shortOutgoingStatus(status: string): string {
   const s = String(status || '').toLowerCase();
   return OUT_INVITE_STATUS_LABEL[s] || s || '—';
 }
 
-export function ProfileView({ user, accountProfile, reloadAccountProfile, history, players, pendingInvites, outgoingInvites, onAcceptInvite, onRejectInvite, onCancelInvite, onUnlinkPlayer, onSignOut, onRefresh, onRenameSelf, refreshBusy, syncMeta, onRetrySyncFailed, retryingFailedSaves, failedCloudSavesCount }) {
+export function ProfileView({
+  user,
+  accountProfile,
+  reloadAccountProfile,
+  players,
+  pendingInvites,
+  outgoingInvites,
+  onAcceptInvite,
+  onRejectInvite,
+  onCancelInvite,
+  onUnlinkPlayer: _onUnlinkPlayer,
+  onSignOut,
+  onRefresh,
+  onRenameSelf,
+  refreshBusy,
+  syncMeta,
+  onRetrySyncFailed,
+  retryingFailedSaves,
+  failedCloudSavesCount,
+}: ProfileViewProps) {
   const [editingName, setEditingName] = useState(false);
   const [draftName, setDraftName] = useState('');
   const [savingName, setSavingName] = useState(false);
@@ -27,7 +97,7 @@ export function ProfileView({ user, accountProfile, reloadAccountProfile, histor
   const [draftPhone, setDraftPhone] = useState('');
   const [savingPhone, setSavingPhone] = useState(false);
   const [phoneSaveError, setPhoneSaveError] = useState('');
-  const [inviteBusyId, setInviteBusyId] = useState(null);
+  const [inviteBusyId, setInviteBusyId] = useState<string | null>(null);
   const [inviteMsg, setInviteMsg] = useState('');
   const [showSyncDetails, setShowSyncDetails] = useState(false);
 
@@ -39,7 +109,6 @@ export function ProfileView({ user, accountProfile, reloadAccountProfile, histor
     () => (players || []).find(p => p.linked_user_id === user.id),
     [players, user.id]
   );
-  /** Ten sam merge co w Graczach: profil konta, potem wiersz „Ty” w players. */
   const mergedPhoneRaw = accountProfile?.phone ?? selfPlayer?.phone ?? null;
   const mergedDisplayName =
     (accountProfile?.display_name || '').trim() || selfPlayer?.name || user.email?.split('@')[0] || 'Gracz';
@@ -52,7 +121,7 @@ export function ProfileView({ user, accountProfile, reloadAccountProfile, histor
     setDraftPhone(phoneRaw ? formatPhone(String(phoneRaw)) : '');
   }, [accountProfile, selfPlayer, user.email]);
 
-  const buildProfilePayload = (patch = {}) => {
+  const buildProfilePayload = (patch: { display_name?: string; phone?: string | null } = {}) => {
     const safeName = (patch.display_name ?? draftName ?? accountProfile?.display_name ?? user.email?.split('@')[0] ?? 'Gracz').trim() || 'Gracz';
     const safeEmailRaw = (accountProfile?.email ?? user.email ?? '').trim().toLowerCase();
     const safePhoneRaw = patch.phone !== undefined
@@ -67,7 +136,7 @@ export function ProfileView({ user, accountProfile, reloadAccountProfile, histor
     };
   };
 
-  const persistProfilePatch = async (patch = {}) => {
+  const persistProfilePatch = async (patch: { display_name?: string; phone?: string | null } = {}) => {
     const payload = buildProfilePayload(patch);
     const { error: updateErr } = await supabase.from('profiles').update(payload).eq('id', user.id);
     if (!updateErr) return { error: null, payload };
@@ -144,7 +213,7 @@ export function ProfileView({ user, accountProfile, reloadAccountProfile, histor
               <p className="font-bold text-white text-lg truncate">{displayName}</p>
               {!editingName && (
                 <button onClick={() => { setEditingName(true); setNameSaveError(''); }} className="text-green-700 hover:text-green-300 transition-colors shrink-0">
-                  <IconPencil size={14} />
+                  <IconPencil />
                 </button>
               )}
             </div>
@@ -165,7 +234,7 @@ export function ProfileView({ user, accountProfile, reloadAccountProfile, histor
             ) : (
               <div className="mt-1 space-y-1">
                 <div className="flex gap-2 items-center">
-                  <input value={draftPhone} onChange={e => { setDraftPhone(formatPhone(e.target.value)); setPhoneSaveError(''); }}
+                  <input value={draftPhone} onChange={(e: ChangeEvent<HTMLInputElement>) => { setDraftPhone(formatPhone(e.target.value)); setPhoneSaveError(''); }}
                     type="tel" inputMode="numeric" maxLength={11} autoFocus placeholder="Numer telefonu"
                     className="flex-1 bg-black/40 rounded-xl px-3 py-1.5 text-sm text-white border border-green-800 focus:outline-none focus:border-rose-600 transition-colors" />
                   <button onClick={savePhone} disabled={savingPhone}
@@ -187,7 +256,7 @@ export function ProfileView({ user, accountProfile, reloadAccountProfile, histor
         {editingName && (
           <div className="space-y-1 pt-1">
             <div className="flex gap-2 items-center">
-              <input value={draftName} onChange={e => { setDraftName(e.target.value); setNameSaveError(''); }} autoFocus
+              <input value={draftName} onChange={(e: ChangeEvent<HTMLInputElement>) => { setDraftName(e.target.value); setNameSaveError(''); }} autoFocus
                 className="flex-1 bg-black/40 rounded-xl px-3 py-2 text-sm text-white border border-green-800 focus:outline-none focus:border-rose-600 transition-colors" />
               <button onClick={saveDisplayName} disabled={savingName || !draftName.trim()}
                 className="shrink-0 text-sm bg-rose-800 hover:bg-rose-900 disabled:opacity-40 rounded-xl px-4 py-2 font-semibold transition-colors">

@@ -1,22 +1,71 @@
-// @ts-nocheck
-import React, { useState, useMemo } from 'react';
+import { useState, useMemo } from 'react';
+import type { ChangeEvent } from 'react';
 import { pluralPL, formatPln, plnToCents } from '../../lib/settlement';
 import { formatDate } from '../../lib/format';
 import { calculateAllTimeStats, recalculateSession, NetBadge, MEDALS, PERIODS } from './historyUtils';
 import { IconCheck, IconShare, IconChevUp, IconChevDown, IconPencil, IconTrash, IconRefresh, IconX, IconArrow, IconPhone } from '../../ui/icons';
 
-export function HistoryTab({ history, onUpdateSession, onDeleteSession, failedSyncCount, failedSessionIds, onRetryFailedSaves, retryingFailedSaves }) {
-  const [period, setPeriod] = useState(null);
-  const [expandedId, setExpandedId] = useState(null);
-  const [editingIds, setEditingIds] = useState({});
-  const [sessionDrafts, setSessionDrafts] = useState({});
-  const [sessionEditErrors, setSessionEditErrors] = useState({});
-  const [savingEditId, setSavingEditId] = useState(null);
-  const [copiedIds, setCopiedIds] = useState({});
-  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+interface SessionPlayer {
+  id: string;
+  name: string;
+  totalBuyIn: number;
+  cashOut: number;
+  netBalance: number;
+  phone?: string;
+  [key: string]: unknown;
+}
+
+interface Transfer {
+  from: string;
+  to: string;
+  amount: number;
+  toPhone?: string;
+}
+
+interface Session {
+  id: string;
+  date: string;
+  totalPot: number;
+  players?: SessionPlayer[];
+  transfers?: Transfer[];
+  shared?: boolean;
+  sharedNote?: string;
+  [key: string]: unknown;
+}
+
+interface HistoryTabProps {
+  history: Session[];
+  onUpdateSession: (id: string, updated: Session) => Promise<string | null>;
+  onDeleteSession: (id: string) => void;
+  failedSyncCount: number;
+  failedSessionIds: string[];
+  onRetryFailedSaves: () => void;
+  retryingFailedSaves: boolean;
+}
+
+export function HistoryTab({
+  history,
+  onUpdateSession,
+  onDeleteSession,
+  failedSyncCount,
+  failedSessionIds,
+  onRetryFailedSaves,
+  retryingFailedSaves,
+}: HistoryTabProps) {
+  const [period, setPeriod] = useState<number | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [editingIds, setEditingIds] = useState<Record<string, boolean>>({});
+  const [sessionDrafts, setSessionDrafts] = useState<Record<string, SessionPlayer[]>>({});
+  const [sessionEditErrors, setSessionEditErrors] = useState<Record<string, string | null>>({});
+  const [savingEditId, setSavingEditId] = useState<string | null>(null);
+  const [copiedIds, setCopiedIds] = useState<Record<string, boolean>>({});
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [archiveLimit, setArchiveLimit] = useState(25);
 
-  const ownedHistoryForStats = useMemo(() => history.filter(s => !s.shared), [history]);
+  const ownedHistoryForStats = useMemo(() => {
+    const owned = history.filter(s => !s.shared);
+    return owned.length > 0 ? owned : history;
+  }, [history]);
   const filteredHistory = period === null ? ownedHistoryForStats : ownedHistoryForStats.slice(-period);
   const stats = calculateAllTimeStats(filteredHistory);
   const sorted = [...history].reverse();
@@ -24,26 +73,26 @@ export function HistoryTab({ history, onUpdateSession, onDeleteSession, failedSy
   const archiveSlice = drilldownSessions.slice(0, archiveLimit);
   const failedSessionIdSet = useMemo(() => new Set(failedSessionIds), [failedSessionIds]);
 
-  const enterEdit = session => {
+  const enterEdit = (session: Session) => {
     setSessionDrafts(prev => ({ ...prev, [session.id]: (session.players ?? []).map(p => ({ ...p })) }));
     setEditingIds(prev => ({ ...prev, [session.id]: true }));
     setSessionEditErrors(prev => ({ ...prev, [session.id]: null }));
   };
-  const cancelEdit = id => {
+  const cancelEdit = (id: string) => {
     setSessionDrafts(prev => { const n = { ...prev }; delete n[id]; return n; });
     setEditingIds(prev => { const n = { ...prev }; delete n[id]; return n; });
     setSessionEditErrors(prev => { const n = { ...prev }; delete n[id]; return n; });
   };
-  const updateDraft = (sessionId, playerId, field, raw) => {
+  const updateDraft = (sessionId: string, playerId: string, field: 'totalBuyIn' | 'cashOut', raw: string) => {
     const value = Math.max(0, parseFloat(raw.replace(/[^0-9.]/g, '')) || 0);
     setSessionDrafts(prev => ({ ...prev, [sessionId]: (prev[sessionId] ?? []).map(p => p.id === playerId ? { ...p, [field]: value } : p) }));
   };
-  const confirmEdit = async session => {
+  const confirmEdit = async (session: Session) => {
     const draft = sessionDrafts[session.id];
     if (!draft) return;
     setSessionEditErrors(prev => ({ ...prev, [session.id]: null }));
     setSavingEditId(session.id);
-    const err = await onUpdateSession(session.id, recalculateSession(session, draft));
+    const err = await onUpdateSession(session.id, recalculateSession(session, draft) as Session);
     setSavingEditId(null);
     if (err) {
       setSessionEditErrors(prev => ({ ...prev, [session.id]: err }));
@@ -51,7 +100,7 @@ export function HistoryTab({ history, onUpdateSession, onDeleteSession, failedSy
     }
     cancelEdit(session.id);
   };
-  const shareSession = async session => {
+  const shareSession = async (session: Session) => {
     const date = new Date(session.date).toLocaleDateString('pl-PL', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
     const playerLines = [...(session.players ?? [])].sort((a, b) => b.netBalance - a.netBalance).map(p => {
       const emoji = p.netBalance > 0 ? '🟢' : p.netBalance < 0 ? '🔴' : '⚪️';
@@ -226,13 +275,13 @@ export function HistoryTab({ history, onUpdateSession, onDeleteSession, failedSy
                                 <div>
                                   <label className="text-xs text-green-200/40 block mb-1">Buy-in (PLN)</label>
                                   <input type="number" min="0" value={p.totalBuyIn}
-                                    onChange={e => updateDraft(session.id, p.id, 'totalBuyIn', e.target.value)}
+                                    onChange={(e: ChangeEvent<HTMLInputElement>) => updateDraft(session.id, p.id, 'totalBuyIn', e.target.value)}
                                     className="w-full bg-black/40 border border-green-800 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-rose-600 transition-colors" />
                                 </div>
                                 <div>
                                   <label className="text-xs text-green-200/40 block mb-1">Cash-out (PLN)</label>
                                   <input type="number" min="0" value={p.cashOut}
-                                    onChange={e => updateDraft(session.id, p.id, 'cashOut', e.target.value)}
+                                    onChange={(e: ChangeEvent<HTMLInputElement>) => updateDraft(session.id, p.id, 'cashOut', e.target.value)}
                                     className="w-full bg-black/40 border border-green-800 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-rose-600 transition-colors" />
                                 </div>
                               </div>

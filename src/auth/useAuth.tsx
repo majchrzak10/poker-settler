@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
+import type { User } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 
 export function useAuth() {
-  const [user, setUser] = useState(null);
+  const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [emailConfirmed, setEmailConfirmed] = useState(() => {
     if (typeof window === 'undefined') return false;
@@ -19,9 +20,9 @@ export function useAuth() {
   });
   useEffect(() => {
     let active = true;
-    const applySession = (session: { user: unknown } | null) => {
+    const applySession = (session: { user: User } | null) => {
       if (!active) return;
-      setUser((session?.user as unknown) ?? null);
+      setUser(session?.user ?? null);
       setLoading(false);
     };
     const syncSessionFromStorage = async () => {
@@ -32,8 +33,8 @@ export function useAuth() {
     void syncSessionFromStorage();
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((event, session) => {
-      if (event === 'SIGNED_OUT') {
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (_event === 'SIGNED_OUT') {
         setUser(null);
         setLoading(false);
         return;

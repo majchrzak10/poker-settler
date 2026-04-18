@@ -1,13 +1,65 @@
-// @ts-nocheck
-import React, { useState } from 'react';
+import { useState } from 'react';
+import type { ChangeEvent, FormEvent } from 'react';
 import { formatPhone } from '../../lib/format';
 import { IconUserPlus, IconCheck, IconX, IconPlus, IconPencil, IconTrash } from '../../ui/icons';
 
-export function PlayersTab({ players, sessionPlayers, onAddPlayer, onUpdatePlayer, onRemovePlayer, onAddToSession, onUnlinkPlayer, currentUserId, accountByEmail, outgoingInviteMetaByEmail, accountProfile, accountEmail }) {
+interface Player {
+  id: string;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  linked_user_id: string | null;
+}
+
+interface SessionPlayer {
+  playerId: string;
+}
+
+interface InviteMeta {
+  id: string;
+  status: 'pending' | 'accepted' | 'rejected' | 'cancelled';
+  created_at: string;
+  responded_at: string | null;
+}
+
+interface AccountProfile {
+  display_name: string | null;
+  phone: string | null;
+}
+
+interface PlayersTabProps {
+  players: Player[];
+  sessionPlayers: SessionPlayer[];
+  onAddPlayer: (name: string, phone: string, email: string) => void;
+  onUpdatePlayer: (id: string, name: string, phone: string, email: string) => void;
+  onRemovePlayer: (id: string) => void;
+  onAddToSession: (id: string) => void;
+  onUnlinkPlayer: (id: string) => Promise<void>;
+  currentUserId: string | null | undefined;
+  accountByEmail: Record<string, boolean>;
+  outgoingInviteMetaByEmail: Record<string, InviteMeta | null>;
+  accountProfile: AccountProfile | null;
+  accountEmail: string | null | undefined;
+}
+
+export function PlayersTab({
+  players,
+  sessionPlayers,
+  onAddPlayer,
+  onUpdatePlayer,
+  onRemovePlayer,
+  onAddToSession,
+  onUnlinkPlayer,
+  currentUserId,
+  accountByEmail,
+  outgoingInviteMetaByEmail,
+  accountProfile,
+  accountEmail,
+}: PlayersTabProps) {
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
-  const [editingId, setEditingId] = useState(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState({ name: '', phone: '', email: '' });
 
   const phoneValid = phone.length === 11;
@@ -24,25 +76,25 @@ export function PlayersTab({ players, sessionPlayers, onAddPlayer, onUpdatePlaye
   const draftEmailError = (draft.email || '').trim().length > 0 && !draftEmailValid;
   const canSaveDraft = draft.name.trim().length > 0 && draftPhoneValid && draftEmailValid;
 
-  const handlePhoneChange = e => setPhone(formatPhone(e.target.value));
+  const handlePhoneChange = (e: ChangeEvent<HTMLInputElement>) => setPhone(formatPhone(e.target.value));
 
-  const handleSubmit = e => {
+  const handleSubmit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!canSubmit) return;
     onAddPlayer(name.trim(), phone, email.trim().toLowerCase());
     setName(''); setPhone(''); setEmail('');
   };
 
-  const enterEdit = p => {
+  const enterEdit = (p: Player) => {
     const isSelf = p.linked_user_id === currentUserId;
-    const name = isSelf ? ((accountProfile?.display_name || '').trim() || p.name) : p.name;
+    const playerName = isSelf ? ((accountProfile?.display_name || '').trim() || p.name) : p.name;
     const phoneRaw = isSelf ? (accountProfile?.phone ?? p.phone) : p.phone;
     const emailForRow = isSelf ? (accountEmail || p.email || '') : (p.email || '');
     setEditingId(p.id);
-    setDraft({ name, phone: formatPhone(String(phoneRaw || '')), email: emailForRow });
+    setDraft({ name: playerName, phone: formatPhone(String(phoneRaw || '')), email: emailForRow });
   };
   const cancelEdit = () => { setEditingId(null); setDraft({ name: '', phone: '', email: '' }); };
-  const confirmEdit = (id, isSelfPlayer) => {
+  const confirmEdit = (id: string, isSelfPlayer: boolean) => {
     if (isSelfPlayer) {
       const emailNorm = (accountEmail || '').trim().toLowerCase();
       const digits = draft.phone.replace(/\D/g, '');
@@ -64,7 +116,7 @@ export function PlayersTab({ players, sessionPlayers, onAddPlayer, onUpdatePlaye
       </div>
 
       <form onSubmit={handleSubmit} className="bg-black/30 rounded-2xl p-4 border border-green-900 space-y-3">
-        <input value={name} onChange={e => setName(e.target.value)} placeholder="Imię gracza *"
+        <input value={name} onChange={(e: ChangeEvent<HTMLInputElement>) => setName(e.target.value)} placeholder="Imię gracza *"
           className="w-full bg-black/40 rounded-xl px-4 py-3 text-sm text-white placeholder-green-700 border border-green-800 focus:outline-none focus:border-rose-600 transition-colors" />
         <div className="space-y-1">
           <input value={phone} onChange={handlePhoneChange} placeholder="Numer telefonu *" type="tel" inputMode="numeric" maxLength={11}
@@ -72,10 +124,10 @@ export function PlayersTab({ players, sessionPlayers, onAddPlayer, onUpdatePlaye
           {phoneError && <p className="text-xs text-red-400 px-1">Podaj pełny, 9-cyfrowy numer telefonu</p>}
         </div>
         <div className="space-y-1">
-          <input value={email} onChange={e => setEmail(e.target.value)} placeholder="Email znajomego *" type="email" autoComplete="off"
+          <input value={email} onChange={(e: ChangeEvent<HTMLInputElement>) => setEmail(e.target.value)} placeholder="Email znajomego *" type="email" autoComplete="off"
             className={`w-full bg-black/40 rounded-xl px-4 py-3 text-sm text-white placeholder-green-700 border transition-colors focus:outline-none ${emailError ? 'border-red-500' : 'border-green-800 focus:border-rose-600'}`} />
           {emailError && <p className="text-xs text-red-400 px-1">Podaj poprawny adres email</p>}
-          {!emailError && email.trim().length > 0 && <p className="text-xs text-green-300/50 px-1">Jeśli email nie ma konta, gracz zostanie dodany ze statusem „Brak konta” (bez zaproszenia).</p>}
+          {!emailError && email.trim().length > 0 && <p className="text-xs text-green-300/50 px-1">Jeśli email nie ma konta, gracz zostanie dodany ze statusem „Brak konta" (bez zaproszenia).</p>}
         </div>
         <button type="submit" disabled={!canSubmit}
           className="w-full flex items-center justify-center gap-2 bg-rose-800 hover:bg-rose-900 disabled:opacity-40 disabled:cursor-not-allowed rounded-xl py-3 text-sm font-semibold transition-colors">
@@ -123,11 +175,11 @@ export function PlayersTab({ players, sessionPlayers, onAddPlayer, onUpdatePlaye
             <div key={p.id} className="bg-black/30 rounded-2xl border border-green-900 px-4 py-3">
               {isEditing ? (
                 <div className="space-y-2">
-                  <input value={draft.name} onChange={e => setDraft(d => ({ ...d, name: e.target.value }))}
+                  <input value={draft.name} onChange={(e: ChangeEvent<HTMLInputElement>) => setDraft(d => ({ ...d, name: e.target.value }))}
                     placeholder="Imię gracza" autoFocus
                     className="w-full bg-black/40 rounded-xl px-3 py-2.5 text-sm text-white placeholder-green-700 border border-green-800 focus:outline-none focus:border-rose-600 transition-colors" />
                   <div className="space-y-1">
-                    <input value={draft.phone} onChange={e => setDraft(d => ({ ...d, phone: formatPhone(e.target.value) }))}
+                    <input value={draft.phone} onChange={(e: ChangeEvent<HTMLInputElement>) => setDraft(d => ({ ...d, phone: formatPhone(e.target.value) }))}
                       placeholder="Numer telefonu" type="tel" inputMode="numeric" maxLength={11}
                       className={`w-full bg-black/40 rounded-xl px-3 py-2.5 text-sm text-white placeholder-green-700 border transition-colors focus:outline-none ${draftPhoneError ? 'border-red-500' : 'border-green-800 focus:border-rose-600'}`} />
                     {draftPhoneError && !isSelfPlayer && <p className="text-xs text-red-400 px-1">Podaj pełny, 9-cyfrowy numer</p>}
@@ -136,7 +188,7 @@ export function PlayersTab({ players, sessionPlayers, onAddPlayer, onUpdatePlaye
                     )}
                   </div>
                   <div className="space-y-1">
-                    <input value={isSelfPlayer ? (accountEmail || '') : draft.email} onChange={e => !isSelfPlayer && setDraft(d => ({ ...d, email: e.target.value }))}
+                    <input value={isSelfPlayer ? (accountEmail || '') : draft.email} onChange={(e: ChangeEvent<HTMLInputElement>) => !isSelfPlayer && setDraft(d => ({ ...d, email: e.target.value }))}
                       placeholder="Email znajomego" type="email" autoComplete="off" readOnly={isSelfPlayer}
                       className={`w-full bg-black/40 rounded-xl px-3 py-2.5 text-sm text-white placeholder-green-700 border transition-colors focus:outline-none ${!isSelfPlayer && draftEmailError ? 'border-red-500' : 'border-green-800 focus:border-rose-600'} ${isSelfPlayer ? 'opacity-80 cursor-not-allowed' : ''}`} />
                     {!isSelfPlayer && draftEmailError && <p className="text-xs text-red-400 px-1">Podaj poprawny email</p>}
@@ -208,4 +260,3 @@ export function PlayersTab({ players, sessionPlayers, onAddPlayer, onUpdatePlaye
 }
 
 // ─── SessionTab ───────────────────────────────────────────────────────────────
-

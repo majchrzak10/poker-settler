@@ -1,5 +1,5 @@
-// @ts-nocheck
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import type { MutableRefObject } from 'react';
 import { plnToCents, settleDebts, formatPln } from './lib/settlement';
 import { supabase } from './lib/supabase';
 import {
@@ -17,6 +17,7 @@ import {
 } from './sync/errors';
 import { logClientEvent } from './sync/telemetry';
 import { useCloudSync } from './sync/useCloudSync';
+import type { CloudPlayer } from './sync/useCloudSync';
 import { useLiveSessionPush } from './sync/useLiveSessionPush';
 import {
   loadLS,
@@ -36,37 +37,49 @@ import { HistoryTab } from './features/history/HistoryTab';
 import { ProfileView } from './features/profile/ProfileView';
 import { TABS, SCREEN_META } from './app/navigation';
 
+// ─── Local types ──────────────────────────────────────────────────────────────
+
+interface SessionPlayer { playerId: string; buyIns: number[]; cashOut: string; }
+interface Transaction { from: string; to: string; amount: number; toPhone?: string; }
+interface HistorySessionPlayer { id: string; name: string; phone?: string; totalBuyIn: number; cashOut: number; netBalance: number; [key: string]: unknown; }
+interface HistoryTransfer { from: string; to: string; amount: number; toPhone?: string; }
+interface HistorySession { id: string; date: string; totalPot: number; players: HistorySessionPlayer[]; transfers: HistoryTransfer[]; shared?: boolean; sharedNote?: string; [key: string]: unknown; }
+interface SaveStatus { type: 'ok' | 'error'; message: string; }
+interface SyncMeta { lastError: string | null; [key: string]: unknown; }
+interface FailedCloudSave { sessionId: string; sessionRow: Record<string, unknown>; sessionPlayersRows: Record<string, unknown>[]; transferRows: Record<string, unknown>[]; participationRows: Record<string, unknown>[]; }
+type AppError = { message?: string; code?: string; details?: string };
+
 export default function App() {
   const { user, loading: authLoading, emailConfirmed, setEmailConfirmed } = useAuth();
   const { profile: accountProfile, reload: reloadAccountProfile } = useAccountProfile(user);
-  const [players, setPlayers] = useState(() => loadLS('poker_players', []));
-  const [sessionPlayers, setSessionPlayers] = useState(() => loadLS('poker_session', []));
-  const [defaultBuyIn, setDefaultBuyIn] = useState(() => loadLS('poker_default_buyin', 50));
+  const [players, setPlayers] = useState<CloudPlayer[]>(() => loadLS('poker_players', []));
+  const [sessionPlayers, setSessionPlayers] = useState<SessionPlayer[]>(() => loadLS('poker_session', []));
+  const [defaultBuyIn, setDefaultBuyIn] = useState<number>(() => loadLS('poker_default_buyin', 50));
   const [tab, setTab] = useState('session');
-  const [transactions, setTransactions] = useState([]);
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [settled, setSettled] = useState(false);
-  const [history, setHistory] = useState(() => loadLS('poker_sessions_history', []));
-  const [sharedHistory, setSharedHistory] = useState([]);
-  const [pendingInvites, setPendingInvites] = useState([]);
-  const [outgoingInvites, setOutgoingInvites] = useState([]);
-  const [outgoingInviteMetaByEmail, setOutgoingInviteMetaByEmail] = useState({});
-  const [accountByEmail, setAccountByEmail] = useState({});
-  const [autoAddMeToSession, setAutoAddMeToSession] = useState(() => loadLS('poker_auto_add_me', true));
+  const [history, setHistory] = useState<HistorySession[]>(() => loadLS('poker_sessions_history', []));
+  const [sharedHistory, setSharedHistory] = useState<HistorySession[]>([]);
+  const [pendingInvites, setPendingInvites] = useState<{ id: string; invitee_email: string; created_at: string }[]>([]);
+  const [outgoingInvites, setOutgoingInvites] = useState<{ id: string; invitee_email: string; status: 'pending' | 'accepted' | 'rejected' | 'cancelled' }[]>([]);
+  const [outgoingInviteMetaByEmail, setOutgoingInviteMetaByEmail] = useState<Record<string, { id: string; status: 'pending' | 'accepted' | 'rejected' | 'cancelled'; created_at: string; responded_at: string | null } | null>>({});
+  const [accountByEmail, setAccountByEmail] = useState<Record<string, boolean>>({});
+  const [autoAddMeToSession, setAutoAddMeToSession] = useState<boolean>(() => loadLS('poker_auto_add_me', true));
   const [savingSession, setSavingSession] = useState(false);
-  const [saveStatus, setSaveStatus] = useState(null);
+  const [saveStatus, setSaveStatus] = useState<SaveStatus | null>(null);
   const [manualRefreshBusy, setManualRefreshBusy] = useState(false);
-  const [failedCloudSaves, setFailedCloudSaves] = useState(() => loadLS(FAILED_CLOUD_SAVES_KEY, []));
+  const [failedCloudSaves, setFailedCloudSaves] = useState<FailedCloudSave[]>(() => loadLS(FAILED_CLOUD_SAVES_KEY, []));
   const [retryingFailedSaves, setRetryingFailedSaves] = useState(false);
-  const [syncMeta, setSyncMeta] = useState(() => sanitizeSyncMeta(loadLS(SYNC_META_KEY, { lastAttempt: null, lastSuccess: null, lastError: null })));
+  const [syncMeta, setSyncMeta] = useState<SyncMeta>(() => (sanitizeSyncMeta(loadLS(SYNC_META_KEY, { lastAttempt: null, lastSuccess: null, lastError: null })) ?? { lastError: null }) as SyncMeta);
   const [skipLiveSessionCloud, setSkipLiveSessionCloud] = useState(false);
-  const [cloudBanner, setCloudBanner] = useState(null);
+  const [cloudBanner, setCloudBanner] = useState<string | null>(null);
   const [syncChannelNonce, setSyncChannelNonce] = useState(0);
   const [onboardingOpen, setOnboardingOpen] = useState(() => !loadLS(ONBOARDING_KEY, false));
-  const applyingRemoteSessionRef = useRef(false);
-  const lastDraftHashRef = useRef(buildDraftHash(defaultBuyIn, sessionPlayers));
-  const lastMergedLiveUpdatedAtRef = useRef(null);
-  const sessionPlayersRef = useRef(sessionPlayers);
-  const defaultBuyInRef = useRef(defaultBuyIn);
+  const applyingRemoteSessionRef = useRef<boolean>(false);
+  const lastDraftHashRef = useRef<string | null>(buildDraftHash(defaultBuyIn, sessionPlayers));
+  const lastMergedLiveUpdatedAtRef = useRef<string | null>(null);
+  const sessionPlayersRef = useRef<SessionPlayer[]>(sessionPlayers);
+  const defaultBuyInRef = useRef<number>(defaultBuyIn);
 
   useDebouncedLocalStorage('poker_players', players);
   useDebouncedLocalStorage('poker_session', sessionPlayers);
@@ -82,27 +95,26 @@ export default function App() {
   const recordSyncSuccess = () => {
     setSyncMeta(prev => ({ ...prev, lastSuccess: new Date().toISOString(), lastError: null }));
   };
-  const recordSyncError = msg => {
+  const recordSyncError = (msg: string | null) => {
     setSyncMeta(prev => ({ ...prev, lastError: msg || 'Błąd synchronizacji' }));
   };
-  const notifyCloudFailure = msg => {
-    const m = msg || 'Błąd synchronizacji';
-    recordSyncError(m);
-    setCloudBanner(m);
+  const notifyCloudFailure = (msg: string) => {
+    recordSyncError(msg);
+    setCloudBanner(msg);
   };
-  const normalizeEmail = value => (value || '').trim().toLowerCase();
-  const findProfileByEmail = async emailNorm => {
+  const normalizeEmail = (value: string | null | undefined) => (value || '').trim().toLowerCase();
+  const findProfileByEmail = async (emailNorm: string): Promise<string | null> => {
     if (!emailNorm) return null;
     const { data, error } = await supabase.from('profiles').select('id').eq('email', emailNorm).maybeSingle();
     if (error) throw error;
     return data?.id || null;
   };
-  const createInviteIfPossible = async (playerId, emailNorm) => {
+  const createInviteIfPossible = async (playerId: string, emailNorm: string): Promise<boolean> => {
     if (!emailNorm || emailNorm === normalizeEmail(user?.email)) return false;
     const profileId = await findProfileByEmail(emailNorm);
     if (!profileId) return false;
     const { error: inviteErr } = await supabase.from('friend_invites').insert({
-      requester_user_id: user.id,
+      requester_user_id: user!.id,
       requester_player_id: playerId,
       invitee_email: emailNorm,
     });
@@ -141,7 +153,7 @@ export default function App() {
     };
   }, [user?.id, accountProfile, players, reloadAccountProfile]);
 
-  const { refreshCloudData } = useCloudSync({
+  const { refreshCloudData } = (useCloudSync as unknown as (props: Record<string, unknown>) => { refreshCloudData: () => Promise<void> })({
     user,
     players,
     skipLiveSessionCloud,
@@ -186,13 +198,14 @@ export default function App() {
     if (!selfPlayer) return;
     setSessionPlayers([{ playerId: selfPlayer.id, buyIns: [defaultBuyIn], cashOut: '' }]);
   }, [user?.id, players, sessionPlayers.length, defaultBuyIn, autoAddMeToSession]);
-  const combinedHistory = useMemo(
-    () => [...history, ...sharedHistory].sort((a, b) => new Date(a.date) - new Date(b.date)),
-    [history, sharedHistory]
-  );
+  const combinedHistory = useMemo(() => {
+    const ownedIds = new Set(history.map(s => s.id));
+    const dedupedShared = sharedHistory.filter(s => !ownedIds.has(String(s.sourceSessionId)));
+    return [...history, ...dedupedShared].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  }, [history, sharedHistory]);
 
   const totalPot = sessionPlayers.reduce((sum, sp) => sum + getTotalBuyIn(sp), 0);
-  const addFailedCloudSave = payload => {
+  const addFailedCloudSave = (payload: FailedCloudSave) => {
     setFailedCloudSaves(prev => {
       const idx = prev.findIndex(p => p.sessionId === payload.sessionId);
       if (idx === -1) return [...prev, payload];
@@ -201,7 +214,7 @@ export default function App() {
       return next;
     });
   };
-  const removeFailedCloudSave = sessionId => {
+  const removeFailedCloudSave = (sessionId: string) => {
     setFailedCloudSaves(prev => prev.filter(p => p.sessionId !== sessionId));
   };
 
@@ -211,19 +224,19 @@ export default function App() {
     recordSyncAttempt();
     let success = 0;
     let failed = 0;
-    let lastErr = null;
+    let lastErr: string | null = null;
     for (const item of failedCloudSaves) {
       try {
         await persistSessionSaveCloud(item.sessionRow, item.sessionPlayersRows, item.transferRows, item.participationRows, setCloudBanner);
         removeFailedCloudSave(item.sessionId);
         success++;
       } catch (e) {
-        if (e?.code === 'MISSING_SESSION_PLAYERS' || isSessionPlayerFkError(e)) {
-          // This payload is stale and cannot be retried automatically.
+        const err = e as AppError;
+        if (err?.code === 'MISSING_SESSION_PLAYERS' || isSessionPlayerFkError(err)) {
           removeFailedCloudSave(item.sessionId);
         }
         failed++;
-        lastErr = e?.message || String(e);
+        lastErr = err?.message || String(e);
         console.error('Retry cloud save failed:', e);
       }
     }
@@ -251,7 +264,7 @@ export default function App() {
     [players]
   );
 
-  const addPlayer = async (name, phone, email) => {
+  const addPlayer = async (name: string, phone: string, email: string) => {
     const emailNorm = normalizeEmail(email);
     const phoneDigits = normalizePhoneDigits(phone);
     if (phoneDigits.length >= 9) {
@@ -262,7 +275,7 @@ export default function App() {
       }
     }
     const id = generateId();
-    const row = { id, name, phone, email: emailNorm };
+    const row: CloudPlayer = { id, name, phone, email: emailNorm, linked_user_id: null };
     setPlayers(prev => [...prev, row]);
     if (!user) return;
     const { error } = await supabase.from('players').insert({ id, owner_id: user.id, name, phone: phone || null, email: emailNorm || null });
@@ -282,12 +295,12 @@ export default function App() {
           setCloudBanner('Gracz dodany, ale email nie ma jeszcze konta. Status: Brak konta.');
         }
       } catch (inviteErr) {
-        notifyCloudFailure(inviteErr.message);
+        notifyCloudFailure((inviteErr as AppError)?.message || 'Błąd zaproszenia');
       }
       void refreshCloudData();
     }
   };
-  const updatePlayer = async (id, name, phone, email) => {
+  const updatePlayer = async (id: string, name: string, phone: string, email: string) => {
     const prevRow = players.find(p => p.id === id);
     const emailNorm = normalizeEmail(email);
     const phoneDigits = normalizePhoneDigits(phone);
@@ -332,12 +345,12 @@ export default function App() {
           setCloudBanner('Email zaktualizowany. Zaproszenie zostało wysłane.');
         }
       } catch (inviteErr) {
-        notifyCloudFailure(inviteErr.message);
+        notifyCloudFailure((inviteErr as AppError)?.message || 'Błąd zaproszenia');
       }
       void refreshCloudData();
     }
   };
-  const acceptInvite = async (inviteId) => {
+  const acceptInvite = async (inviteId: string): Promise<string | null> => {
     const { error } = await supabase.rpc('accept_friend_invite', { p_invite_id: inviteId });
     if (error) {
       notifyCloudFailure(error.message);
@@ -347,7 +360,7 @@ export default function App() {
     return null;
   };
 
-  const rejectInvite = async (inviteId) => {
+  const rejectInvite = async (inviteId: string): Promise<string | null> => {
     const { error } = await supabase.rpc('reject_friend_invite', { p_invite_id: inviteId });
     if (error) {
       notifyCloudFailure(error.message);
@@ -356,7 +369,7 @@ export default function App() {
     void refreshCloudData();
     return null;
   };
-  const cancelInvite = async inviteId => {
+  const cancelInvite = async (inviteId: string): Promise<string | null> => {
     const { error } = await supabase.rpc('cancel_friend_invite', { p_invite_id: inviteId });
     if (error) {
       notifyCloudFailure(error.message);
@@ -365,24 +378,20 @@ export default function App() {
     void refreshCloudData();
     return null;
   };
-  const unlinkPlayer = async (playerId) => {
+  const unlinkPlayer = async (playerId: string): Promise<void> => {
     const prevRow = players.find(p => p.id === playerId);
     setPlayers(prev => prev.map(p => p.id === playerId ? { ...p, linked_user_id: null } : p));
-    if (!user) return true;
+    if (!user) return;
     const { error: rpcErr } = await supabase.rpc('remove_friend_player_link', { p_player_id: playerId });
     if (rpcErr) {
       if (prevRow) setPlayers(prev => prev.map(p => p.id === playerId ? prevRow : p));
       notifyCloudFailure(rpcErr.message);
       void refreshCloudData();
-      if (isFriendLinkRpcMissing(rpcErr)) {
-        return false;
-      }
-      return false;
+    } else {
+      void refreshCloudData();
     }
-    void refreshCloudData();
-    return true;
   };
-  const removePlayer = async id => {
+  const removePlayer = async (id: string) => {
     const prevP = players;
     const prevSp = sessionPlayers;
     const row = players.find(p => p.id === id);
@@ -391,8 +400,7 @@ export default function App() {
       return;
     }
     if (user && row?.linked_user_id) {
-      const ok = await unlinkPlayer(id);
-      if (!ok) return;
+      await unlinkPlayer(id);
     }
     setPlayers(prev => prev.filter(p => p.id !== id));
     setSessionPlayers(prev => prev.filter(sp => sp.playerId !== id));
@@ -406,15 +414,15 @@ export default function App() {
       void refreshCloudData();
     }
   };
-  const addToSession = playerId => {
+  const addToSession = (playerId: string) => {
     if (sessionPlayers.some(sp => sp.playerId === playerId)) return;
     setSettled(false);
     setSessionPlayers(prev => [...prev, { playerId, buyIns: [defaultBuyIn], cashOut: '' }]);
   };
-  const removeFromSession = playerId => { setSettled(false); setSessionPlayers(prev => prev.filter(sp => sp.playerId !== playerId)); };
-  const addBuyIn = playerId => { setSettled(false); setSessionPlayers(prev => prev.map(sp => sp.playerId === playerId ? { ...sp, buyIns: [...sp.buyIns, defaultBuyIn] } : sp)); };
-  const removeBuyIn = playerId => { setSettled(false); setSessionPlayers(prev => prev.map(sp => sp.playerId === playerId && sp.buyIns.length > 1 ? { ...sp, buyIns: sp.buyIns.slice(0, -1) } : sp)); };
-  const setCashOut = (playerId, value) => { setSettled(false); setSessionPlayers(prev => prev.map(sp => sp.playerId === playerId ? { ...sp, cashOut: value.replace(/[^0-9.]/g, '') } : sp)); };
+  const removeFromSession = (playerId: string) => { setSettled(false); setSessionPlayers(prev => prev.filter(sp => sp.playerId !== playerId)); };
+  const addBuyIn = (playerId: string) => { setSettled(false); setSessionPlayers(prev => prev.map(sp => sp.playerId === playerId ? { ...sp, buyIns: [...sp.buyIns, defaultBuyIn] } : sp)); };
+  const removeBuyIn = (playerId: string) => { setSettled(false); setSessionPlayers(prev => prev.map(sp => sp.playerId === playerId && sp.buyIns.length > 1 ? { ...sp, buyIns: sp.buyIns.slice(0, -1) } : sp)); };
+  const setCashOut = (playerId: string, value: string) => { setSettled(false); setSessionPlayers(prev => prev.map(sp => sp.playerId === playerId ? { ...sp, cashOut: value.replace(/[^0-9.]/g, '') } : sp)); };
 
   const handleCalculate = () => {
     const entries = sessionPlayers.flatMap(sp => {
@@ -457,7 +465,10 @@ export default function App() {
       to_name: t.to,
       amount: plnToCents(t.amount),
     }));
-    const linkedPlrs = sessionPlrs.filter(p => playerById[p.id]?.linked_user_id);
+    const linkedPlrs = sessionPlrs.filter(p => {
+      const linked = playerById[p.id]?.linked_user_id;
+      return linked && linked !== user?.id;
+    });
     const participationRows = linkedPlrs.map(p => ({
       user_id: playerById[p.id].linked_user_id,
       session_id: sessionId,
@@ -481,9 +492,10 @@ export default function App() {
         recordSyncSuccess();
         setSaveStatus({ type: 'ok', message: 'Sesja zapisana w chmurze.' });
       } catch (e) {
-        const msg = e?.message || String(e);
+        const err = e as AppError;
+        const msg = err?.message || String(e);
         notifyCloudFailure(msg);
-        if (e?.code === 'MISSING_SESSION_PLAYERS' || isSessionPlayerFkError(e)) {
+        if (err?.code === 'MISSING_SESSION_PLAYERS' || isSessionPlayerFkError(err)) {
           setSaveStatus({
             type: 'error',
             message: 'Sesja zapisana lokalnie. Część graczy nie istnieje już w chmurze — otwórz nową sesję i wybierz graczy ponownie z listy.',
@@ -496,8 +508,8 @@ export default function App() {
         try {
           void logClientEvent('error', 'save_session_failed', {
             message: msg?.slice?.(0, 300) || String(e),
-            code: e?.code || null,
-            classifier: (e?.code === 'MISSING_SESSION_PLAYERS' || isSessionPlayerFkError(e)) ? 'missing_players' : 'other',
+            code: err?.code || null,
+            classifier: (err?.code === 'MISSING_SESSION_PLAYERS' || isSessionPlayerFkError(err)) ? 'missing_players' : 'other',
             session_id: sessionId
           });
         } catch (_) {}
@@ -506,10 +518,10 @@ export default function App() {
     setSavingSession(false);
   };
 
-  const updateSession = async (id, updated) => {
+  const updateSession = async (id: string, updated: { id: string; date: string; totalPot: number; players?: HistorySessionPlayer[]; transfers?: HistoryTransfer[]; [key: string]: unknown }): Promise<string | null> => {
     const prevSnap = history.find(s => s.id === id);
     if (!prevSnap) return 'Nie znaleziono sesji.';
-    setHistory(prev => prev.map(s => s.id === id ? updated : s));
+    setHistory(prev => prev.map(s => s.id === id ? updated as HistorySession : s));
     if (!user || String(id).startsWith('shared:')) return null;
     recordSyncAttempt();
     try {
@@ -519,23 +531,23 @@ export default function App() {
         played_at: updated.date,
         total_pot: plnToCents(updated.totalPot),
       };
-      const sessionPlayersRows = updated.players.map(p => ({
+      const sessionPlayersRows = (updated.players ?? []).map(p => ({
         session_id: id,
         player_id: p.id,
         player_name: p.name,
         total_buy_in: plnToCents(p.totalBuyIn),
         cash_out: plnToCents(p.cashOut),
       }));
-      const transferRows = updated.transfers.map(t => ({
+      const transferRows = (updated.transfers ?? []).map(t => ({
         session_id: id,
         from_name: t.from,
         to_name: t.to,
         amount: plnToCents(t.amount),
       }));
       const participationRows = [];
-      for (const p of updated.players) {
+      for (const p of (updated.players ?? [])) {
         const pl = playerById[p.id];
-        if (pl?.linked_user_id) {
+        if (pl?.linked_user_id && pl.linked_user_id !== user.id) {
           participationRows.push({
             user_id: pl.linked_user_id,
             session_id: id,
@@ -552,39 +564,39 @@ export default function App() {
       recordSyncSuccess();
       return null;
     } catch (e) {
-      const msg = e?.message || String(e);
+      const msg = (e as AppError)?.message || String(e);
       setHistory(prev => prev.map(s => s.id === id ? prevSnap : s));
       notifyCloudFailure(msg);
       console.error('updateSession cloud failed:', e);
       return 'Edycja jest zapisana tylko lokalnie. Chmura nie przyjęła zmian — spróbuj ponownie.';
     }
   };
-  const deleteSession = async (id) => {
+  const deleteSession = async (id: string) => {
     if (String(id).startsWith('shared:')) return;
     const prevEntry = history.find(s => s.id === id);
     setHistory(prev => prev.filter(s => s.id !== id));
     if (!user) return;
     const { error: e1 } = await supabase.from('transfers').delete().eq('session_id', id);
     if (e1) {
-      if (prevEntry) setHistory(prev => [...prev, prevEntry].sort((a, b) => new Date(a.date) - new Date(b.date)));
+      if (prevEntry) setHistory(prev => [...prev, prevEntry].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()));
       notifyCloudFailure(e1.message);
       return;
     }
     const { error: e2 } = await supabase.from('session_players').delete().eq('session_id', id);
     if (e2) {
-      if (prevEntry) setHistory(prev => [...prev, prevEntry].sort((a, b) => new Date(a.date) - new Date(b.date)));
+      if (prevEntry) setHistory(prev => [...prev, prevEntry].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()));
       notifyCloudFailure(e2.message);
       return;
     }
     const { error: e3 } = await supabase.from('participations').delete().eq('session_id', id);
     if (e3) {
-      if (prevEntry) setHistory(prev => [...prev, prevEntry].sort((a, b) => new Date(a.date) - new Date(b.date)));
+      if (prevEntry) setHistory(prev => [...prev, prevEntry].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()));
       notifyCloudFailure(e3.message);
       return;
     }
     const { error: e4 } = await supabase.from('sessions').delete().eq('id', id);
     if (e4 && prevEntry) {
-      setHistory(prev => [...prev, prevEntry].sort((a, b) => new Date(a.date) - new Date(b.date)));
+      setHistory(prev => [...prev, prevEntry].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()));
       notifyCloudFailure(e4.message);
     } else if (!e4) {
       void refreshCloudData();
@@ -606,7 +618,7 @@ export default function App() {
       setManualRefreshBusy(false);
     }
   };
-  const syncSelfPlayerName = async nextName => {
+  const syncSelfPlayerName = async (nextName: string) => {
     if (!user || !nextName) return;
     const myEmail = normalizeEmail(user.email);
     const selfIds = players

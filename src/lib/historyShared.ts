@@ -13,7 +13,7 @@ export function mapSharedParticipations(rows: Record<string, unknown>[] | null |
     const cashOut = ((r.cash_out as number) || 0) / 100;
     return {
       id: `shared:${r.session_id}`,
-      date: r.session_date,
+      date: (r.session_date as string) || '',
       totalPot: ((r.total_pot as number) || 0) / 100,
       players: [
         {
@@ -25,7 +25,7 @@ export function mapSharedParticipations(rows: Record<string, unknown>[] | null |
           netBalance: cashOut - totalBuyIn,
         },
       ],
-      transfers: [],
+      transfers: [] as { from: string; to: string; amount: number }[],
       shared: true,
       sourceSessionId: r.session_id,
       sharedNote:

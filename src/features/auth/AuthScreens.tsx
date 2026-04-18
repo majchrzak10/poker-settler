@@ -1,5 +1,5 @@
-// @ts-nocheck
 import { useState } from 'react';
+import type { FormEvent, ChangeEvent } from 'react';
 import { supabase } from '../../lib/supabase';
 import { formatPhone } from '../../lib/format';
 
@@ -11,7 +11,7 @@ export function LoadingScreen() {
   );
 }
 
-export function EmailConfirmedScreen({ onContinue }) {
+export function EmailConfirmedScreen({ onContinue }: { onContinue: () => void }) {
   return (
     <div className="min-h-screen bg-green-950 flex items-center justify-center p-4">
       <div className="w-full max-w-sm text-center space-y-6">
@@ -22,8 +22,10 @@ export function EmailConfirmedScreen({ onContinue }) {
             Twój adres email został potwierdzony. Możesz się teraz zalogować.
           </p>
         </div>
-        <button onClick={onContinue}
-          className="w-full bg-rose-800 hover:bg-rose-900 rounded-xl py-3 text-sm font-semibold transition-colors">
+        <button
+          onClick={onContinue}
+          className="w-full bg-rose-800 hover:bg-rose-900 rounded-xl py-3 text-sm font-semibold transition-colors"
+        >
           Przejdź do logowania
         </button>
       </div>
@@ -32,7 +34,7 @@ export function EmailConfirmedScreen({ onContinue }) {
 }
 
 export function AuthScreen() {
-  const [mode, setMode] = useState('login');
+  const [mode, setMode] = useState<'login' | 'register'>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [passwordConfirm, setPasswordConfirm] = useState('');
@@ -42,19 +44,27 @@ export function AuthScreen() {
   const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const handleLogin = async e => {
+  const handleLogin = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setLoading(true);
     setError('');
-    const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
-    if (error) {
-      const raw = (error.message || '').toLowerCase();
+    const { error: authError } = await supabase.auth.signInWithPassword({
+      email: email.trim(),
+      password,
+    });
+    if (authError) {
+      const raw = (authError.message || '').toLowerCase();
       if (raw.includes('email not confirmed') || raw.includes('not confirmed')) {
-        setError('Konto nie jest jeszcze aktywne. Otwórz mail z linkiem aktywacyjnym, potwierdź adres, a następnie zaloguj się ponownie.');
-      } else if (raw.includes('invalid login credentials') || raw.includes('invalid credentials')) {
+        setError(
+          'Konto nie jest jeszcze aktywne. Otwórz mail z linkiem aktywacyjnym, potwierdź adres, a następnie zaloguj się ponownie.'
+        );
+      } else if (
+        raw.includes('invalid login credentials') ||
+        raw.includes('invalid credentials')
+      ) {
         setError('Nieprawidłowy email lub hasło.');
       } else {
-        setError(error.message || 'Nie udało się zalogować.');
+        setError(authError.message || 'Nie udało się zalogować.');
       }
       setLoading(false);
       return;
@@ -62,7 +72,7 @@ export function AuthScreen() {
     setLoading(false);
   };
 
-  const handleRegister = async e => {
+  const handleRegister = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setLoading(true);
     setError('');
@@ -74,34 +84,44 @@ export function AuthScreen() {
     }
     const displayName = name.trim() || email.trim().split('@')[0];
     const phoneDigits = regPhone.replace(/\s/g, '') || undefined;
-    const { data, error } = await supabase.auth.signUp({
+    const { data, error: authError } = await supabase.auth.signUp({
       email: email.trim(),
       password,
       options: {
-        emailRedirectTo: typeof window !== 'undefined' ? `${window.location.origin}${window.location.pathname || '/'}` : undefined,
+        emailRedirectTo:
+          typeof window !== 'undefined'
+            ? `${window.location.origin}${window.location.pathname || '/'}`
+            : undefined,
         data: { display_name: displayName, phone: phoneDigits },
       },
     });
-    if (error) {
-      const em = (error.message || '').toLowerCase();
+    if (authError) {
+      const em = (authError.message || '').toLowerCase();
       if (em.includes('already registered') || em.includes('user already')) {
         setError('Ten adres jest już zarejestrowany — użyj logowania.');
       } else {
-        setError(error.message || 'Nie udało się utworzyć konta.');
+        setError(authError.message || 'Nie udało się utworzyć konta.');
       }
       setLoading(false);
       return;
     }
     if (data.session && data.user) {
       await supabase.from('profiles').upsert(
-        { id: data.user.id, display_name: displayName, email: email.trim().toLowerCase(), phone: phoneDigits || null },
+        {
+          id: data.user.id,
+          display_name: displayName,
+          email: email.trim().toLowerCase(),
+          phone: phoneDigits || null,
+        },
         { onConflict: 'id' }
       );
       setLoading(false);
       return;
     }
     if (data.user) {
-      setSuccess('Na podany adres wysłaliśmy wiadomość z linkiem aktywacyjnym. Otwórz mail, kliknij link — po aktywacji możesz się zalogować. (Sprawdź też folder Spam.)');
+      setSuccess(
+        'Na podany adres wysłaliśmy wiadomość z linkiem aktywacyjnym. Otwórz mail, kliknij link — po aktywacji możesz się zalogować. (Sprawdź też folder Spam.)'
+      );
     } else {
       setSuccess('Sprawdź skrzynkę pocztową i postępuj według instrukcji z wiadomości.');
     }
@@ -118,34 +138,82 @@ export function AuthScreen() {
         </div>
         <div className="bg-black/30 border border-green-900 rounded-2xl p-6 space-y-4">
           <div className="flex bg-black/30 border border-green-900 rounded-xl p-1 gap-1">
-            {['login','register'].map(m => (
-              <button key={m} onClick={() => { setMode(m); setError(''); setSuccess(''); setPasswordConfirm(''); setRegPhone(''); }}
-                className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${mode === m ? 'bg-rose-800 text-white' : 'text-green-200/60 hover:text-green-200'}`}>
+            {(['login', 'register'] as const).map(m => (
+              <button
+                key={m}
+                onClick={() => {
+                  setMode(m);
+                  setError('');
+                  setSuccess('');
+                  setPasswordConfirm('');
+                  setRegPhone('');
+                }}
+                className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${mode === m ? 'bg-rose-800 text-white' : 'text-green-200/60 hover:text-green-200'}`}
+              >
                 {m === 'login' ? 'Logowanie' : 'Rejestracja'}
               </button>
             ))}
           </div>
-          <form onSubmit={mode === 'login' ? handleLogin : handleRegister} className="space-y-3">
+          <form
+            onSubmit={mode === 'login' ? handleLogin : handleRegister}
+            className="space-y-3"
+          >
             {mode === 'register' && (
-              <input value={name} onChange={e => setName(e.target.value)} placeholder="Imię (opcjonalne)"
-                className="w-full bg-black/40 rounded-xl px-4 py-3 text-sm text-white placeholder-green-700 border border-green-800 focus:outline-none focus:border-rose-600 transition-colors" />
+              <input
+                value={name}
+                onChange={(e: ChangeEvent<HTMLInputElement>) => setName(e.target.value)}
+                placeholder="Imię (opcjonalne)"
+                className="w-full bg-black/40 rounded-xl px-4 py-3 text-sm text-white placeholder-green-700 border border-green-800 focus:outline-none focus:border-rose-600 transition-colors"
+              />
             )}
-            <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="Email *" required
-              className="w-full bg-black/40 rounded-xl px-4 py-3 text-sm text-white placeholder-green-700 border border-green-800 focus:outline-none focus:border-rose-600 transition-colors" />
-            <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Hasło (min. 6 znaków) *" required minLength={6}
-              className="w-full bg-black/40 rounded-xl px-4 py-3 text-sm text-white placeholder-green-700 border border-green-800 focus:outline-none focus:border-rose-600 transition-colors" />
+            <input
+              type="email"
+              value={email}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => setEmail(e.target.value)}
+              placeholder="Email *"
+              required
+              className="w-full bg-black/40 rounded-xl px-4 py-3 text-sm text-white placeholder-green-700 border border-green-800 focus:outline-none focus:border-rose-600 transition-colors"
+            />
+            <input
+              type="password"
+              value={password}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => setPassword(e.target.value)}
+              placeholder="Hasło (min. 6 znaków) *"
+              required
+              minLength={6}
+              className="w-full bg-black/40 rounded-xl px-4 py-3 text-sm text-white placeholder-green-700 border border-green-800 focus:outline-none focus:border-rose-600 transition-colors"
+            />
             {mode === 'register' && (
-              <input type="password" value={passwordConfirm} onChange={e => setPasswordConfirm(e.target.value)} placeholder="Potwierdź hasło *" required minLength={6}
-                className="w-full bg-black/40 rounded-xl px-4 py-3 text-sm text-white placeholder-green-700 border border-green-800 focus:outline-none focus:border-rose-600 transition-colors" />
+              <input
+                type="password"
+                value={passwordConfirm}
+                onChange={(e: ChangeEvent<HTMLInputElement>) => setPasswordConfirm(e.target.value)}
+                placeholder="Potwierdź hasło *"
+                required
+                minLength={6}
+                className="w-full bg-black/40 rounded-xl px-4 py-3 text-sm text-white placeholder-green-700 border border-green-800 focus:outline-none focus:border-rose-600 transition-colors"
+              />
             )}
             {mode === 'register' && (
-              <input type="tel" inputMode="numeric" value={regPhone} onChange={e => setRegPhone(formatPhone(e.target.value))} placeholder="Telefon (opcjonalnie)" maxLength={11}
-                className="w-full bg-black/40 rounded-xl px-4 py-3 text-sm text-white placeholder-green-700 border border-green-800 focus:outline-none focus:border-rose-600 transition-colors" />
+              <input
+                type="tel"
+                inputMode="numeric"
+                value={regPhone}
+                onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                  setRegPhone(formatPhone(e.target.value))
+                }
+                placeholder="Telefon (opcjonalnie)"
+                maxLength={11}
+                className="w-full bg-black/40 rounded-xl px-4 py-3 text-sm text-white placeholder-green-700 border border-green-800 focus:outline-none focus:border-rose-600 transition-colors"
+              />
             )}
             {error && <p className="text-xs text-rose-400 px-1">{error}</p>}
             {success && <p className="text-xs text-emerald-400 px-1">{success}</p>}
-            <button type="submit" disabled={loading}
-              className="w-full bg-rose-800 hover:bg-rose-900 disabled:opacity-50 rounded-xl py-3 text-sm font-semibold transition-colors">
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full bg-rose-800 hover:bg-rose-900 disabled:opacity-50 rounded-xl py-3 text-sm font-semibold transition-colors"
+            >
               {loading ? 'Ładowanie...' : mode === 'login' ? 'Zaloguj się' : 'Utwórz konto'}
             </button>
           </form>
