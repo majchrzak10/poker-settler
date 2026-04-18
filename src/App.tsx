@@ -465,7 +465,10 @@ export default function App() {
       to_name: t.to,
       amount: plnToCents(t.amount),
     }));
-    const linkedPlrs = sessionPlrs.filter(p => playerById[p.id]?.linked_user_id);
+    const linkedPlrs = sessionPlrs.filter(p => {
+      const linked = playerById[p.id]?.linked_user_id;
+      return linked && linked !== user?.id;
+    });
     const participationRows = linkedPlrs.map(p => ({
       user_id: playerById[p.id].linked_user_id,
       session_id: sessionId,
@@ -544,7 +547,7 @@ export default function App() {
       const participationRows = [];
       for (const p of (updated.players ?? [])) {
         const pl = playerById[p.id];
-        if (pl?.linked_user_id) {
+        if (pl?.linked_user_id && pl.linked_user_id !== user.id) {
           participationRows.push({
             user_id: pl.linked_user_id,
             session_id: id,
