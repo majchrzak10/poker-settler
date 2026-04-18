@@ -62,7 +62,10 @@ export function HistoryTab({
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [archiveLimit, setArchiveLimit] = useState(25);
 
-  const ownedHistoryForStats = useMemo(() => history.filter(s => !s.shared), [history]);
+  const ownedHistoryForStats = useMemo(() => {
+    const owned = history.filter(s => !s.shared);
+    return owned.length > 0 ? owned : history;
+  }, [history]);
   const filteredHistory = period === null ? ownedHistoryForStats : ownedHistoryForStats.slice(-period);
   const stats = calculateAllTimeStats(filteredHistory);
   const sorted = [...history].reverse();

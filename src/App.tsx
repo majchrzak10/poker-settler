@@ -198,10 +198,11 @@ export default function App() {
     if (!selfPlayer) return;
     setSessionPlayers([{ playerId: selfPlayer.id, buyIns: [defaultBuyIn], cashOut: '' }]);
   }, [user?.id, players, sessionPlayers.length, defaultBuyIn, autoAddMeToSession]);
-  const combinedHistory = useMemo(
-    () => [...history, ...sharedHistory].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()),
-    [history, sharedHistory]
-  );
+  const combinedHistory = useMemo(() => {
+    const ownedIds = new Set(history.map(s => s.id));
+    const dedupedShared = sharedHistory.filter(s => !ownedIds.has(String(s.sourceSessionId)));
+    return [...history, ...dedupedShared].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  }, [history, sharedHistory]);
 
   const totalPot = sessionPlayers.reduce((sum, sp) => sum + getTotalBuyIn(sp), 0);
   const addFailedCloudSave = (payload: FailedCloudSave) => {
