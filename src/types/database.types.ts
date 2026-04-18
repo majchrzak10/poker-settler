@@ -384,6 +384,18 @@ export type Database = {
         Args: { p_phone: string };
         Returns: { id: string; display_name: string | null; email: string | null }[];
       };
+      accept_friend_invite: {
+        Args: { p_invite_id: string };
+        Returns: undefined;
+      };
+      reject_friend_invite: {
+        Args: { p_invite_id: string };
+        Returns: undefined;
+      };
+      cancel_friend_invite: {
+        Args: { p_invite_id: string };
+        Returns: undefined;
+      };
     };
     Enums: Record<string, never>;
     CompositeTypes: Record<string, never>;

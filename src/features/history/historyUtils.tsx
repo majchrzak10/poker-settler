@@ -1,9 +1,31 @@
-// @ts-nocheck
-import React from 'react';
 import { plnToCents, settleDebts, formatPln } from '../../lib/settlement';
 
-export function calculateAllTimeStats(history) {
-  const map = history.reduce((acc, session) => {
+interface SessionPlayer {
+  id: string;
+  name: string;
+  totalBuyIn: number;
+  cashOut: number;
+  netBalance: number;
+  phone?: string;
+}
+
+interface Session {
+  id: string;
+  players?: SessionPlayer[];
+  [key: string]: unknown;
+}
+
+interface StatEntry {
+  id: string;
+  name: string;
+  gamesPlayed: number;
+  allTimeBuyIn: number;
+  allTimeCashOut: number;
+  totalNetBalance: number;
+}
+
+export function calculateAllTimeStats(history: Session[]): StatEntry[] {
+  const map = history.reduce<Record<string, StatEntry>>((acc, session) => {
     for (const p of session.players ?? []) {
       if (!acc[p.id])
         acc[p.id] = {
@@ -24,7 +46,11 @@ export function calculateAllTimeStats(history) {
   return Object.values(map).sort((a, b) => b.totalNetBalance - a.totalNetBalance);
 }
 
-export function recalculateSession(session, updatedPlayers) {
+interface UpdatablePlayer extends SessionPlayer {
+  [key: string]: unknown;
+}
+
+export function recalculateSession(session: Session, updatedPlayers: UpdatablePlayer[]) {
   const players = updatedPlayers.map(p => ({
     ...p,
     netBalance: (plnToCents(p.cashOut) - plnToCents(p.totalBuyIn)) / 100,
@@ -32,14 +58,14 @@ export function recalculateSession(session, updatedPlayers) {
   const totalPot = players.reduce((sum, p) => sum + plnToCents(p.totalBuyIn), 0) / 100;
   const entries = players.map(p => ({
     name: p.name,
-    phone: p.phone ?? '',
+    phone: (p.phone as string) ?? '',
     cents: plnToCents(p.cashOut) - plnToCents(p.totalBuyIn),
   }));
   const transfers = settleDebts(entries);
   return { ...session, totalPot, players, transfers };
 }
 
-export function NetBadge({ value }) {
+export function NetBadge({ value }: { value: number }) {
   if (value > 0) return <span className="font-bold text-green-500">+{formatPln(value)} PLN</span>;
   if (value < 0) return <span className="font-bold text-red-500">−{formatPln(-value)} PLN</span>;
   return <span className="font-bold text-green-200/55 tabular-nums">{formatPln(0)} PLN</span>;
