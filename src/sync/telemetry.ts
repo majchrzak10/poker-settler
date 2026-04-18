@@ -22,7 +22,7 @@ function getLogSessionId() {
 
 /** Fire-and-forget — nie blokuje UI. */
 export async function logClientEvent(
-  level: string,
+  level: 'error' | 'warn' | 'info',
   event: string,
   context: Record<string, unknown> | string | number | null | undefined
 ) {
@@ -38,9 +38,9 @@ export async function logClientEvent(
     const payload = {
       user_id,
       session_id: getLogSessionId(),
-      level: level === 'warn' || level === 'info' ? level : 'error',
+      level,
       event: String(event || 'unknown').slice(0, 120),
-      context: safeContext,
+      context: safeContext as import('../types/database.types').Json,
       device,
       app_version: (window as unknown as { POKER_APP_VERSION?: string }).POKER_APP_VERSION || null,
     };
