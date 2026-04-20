@@ -5,6 +5,7 @@ import { supabase } from '../lib/supabase';
 export function useAuth() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [tokenRefreshedAt, setTokenRefreshedAt] = useState<number>(0);
   const [emailConfirmed, setEmailConfirmed] = useState(() => {
     if (typeof window === 'undefined') return false;
     const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
@@ -39,6 +40,9 @@ export function useAuth() {
         setLoading(false);
         return;
       }
+      if (_event === 'TOKEN_REFRESHED') {
+        setTokenRefreshedAt(Date.now());
+      }
       applySession(session);
     });
     const onFocus = () => {
@@ -56,5 +60,5 @@ export function useAuth() {
       subscription.unsubscribe();
     };
   }, []);
-  return { user, loading, emailConfirmed, setEmailConfirmed };
+  return { user, loading, emailConfirmed, setEmailConfirmed, tokenRefreshedAt };
 }

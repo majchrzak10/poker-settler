@@ -25,6 +25,8 @@ import {
   generateId,
   useDebouncedLocalStorage,
   buildDraftHash,
+  clearUserScopedLocalStorage,
+  ensureActiveUserScope,
 } from './lib/storage';
 import { getTotalBuyIn, normalizePhoneDigits } from './lib/format';
 import { useAuth } from './auth/useAuth';
@@ -50,7 +52,7 @@ interface FailedCloudSave { sessionId: string; sessionRow: Record<string, unknow
 type AppError = { message?: string; code?: string; details?: string };
 
 export default function App() {
-  const { user, loading: authLoading, emailConfirmed, setEmailConfirmed } = useAuth();
+  const { user, loading: authLoading, emailConfirmed, setEmailConfirmed, tokenRefreshedAt } = useAuth();
   const { profile: accountProfile, reload: reloadAccountProfile } = useAccountProfile(user);
   const [players, setPlayers] = useState<CloudPlayer[]>(() => loadLS('poker_players', []));
   const [sessionPlayers, setSessionPlayers] = useState<SessionPlayer[]>(() => loadLS('poker_session', []));
@@ -128,6 +130,21 @@ export default function App() {
     return () => clearTimeout(t);
   }, [cloudBanner]);
 
+  /** Ochrona przed wyciekiem danych między kontami na jednym urządzeniu. */
+  useEffect(() => {
+    if (!user?.id) return;
+    const cleared = ensureActiveUserScope(user.id);
+    if (cleared) {
+      setPlayers([]);
+      setHistory([]);
+      setSharedHistory([]);
+      setSessionPlayers([]);
+      setFailedCloudSaves([]);
+      setPendingInvites([]);
+      setOutgoingInvites([]);
+    }
+  }, [user?.id]);
+
   useEffect(() => {
     sessionPlayersRef.current = sessionPlayers;
   }, [sessionPlayers]);
@@ -200,7 +217,10 @@ export default function App() {
   }, [user?.id, players, sessionPlayers.length, defaultBuyIn, autoAddMeToSession]);
   const combinedHistory = useMemo(() => {
     const ownedIds = new Set(history.map(s => s.id));
-    const dedupedShared = sharedHistory.filter(s => !ownedIds.has(String(s.sourceSessionId)));
+    const dedupedShared = sharedHistory.filter(s => {
+      const src = s.sourceSessionId;
+      return typeof src === 'string' && src.length > 0 && !ownedIds.has(src);
+    });
     return [...history, ...dedupedShared].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
   }, [history, sharedHistory]);
 
@@ -463,7 +483,12 @@ export default function App() {
             freshPlayerById = next;
           }
         }
-      } catch (_) {}
+      } catch (e) {
+        console.warn('fresh players fetch failed', e);
+        try {
+          void logClientEvent('warn', 'fresh_players_fetch_failed', { message: String((e as { message?: string })?.message || e).slice(0, 300) });
+        } catch (_) {}
+      }
     }
     const sessionPlrs = sessionPlayers.map(sp => {
       const player = freshPlayerById[sp.playerId];
@@ -630,9 +655,14 @@ export default function App() {
   };
   const handleSignOut = async () => {
     await supabase.auth.signOut();
+    clearUserScopedLocalStorage();
     setPlayers([]);
     setHistory([]);
     setSharedHistory([]);
+    setSessionPlayers([]);
+    setFailedCloudSaves([]);
+    setPendingInvites([]);
+    setOutgoingInvites([]);
     setTab('session');
   };
   const handleManualRefresh = async () => {
