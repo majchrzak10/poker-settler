@@ -4,6 +4,9 @@ import { pluralPL, formatPln, plnToCents } from '../../lib/settlement';
 import { formatDate } from '../../lib/format';
 import { calculateAllTimeStats, recalculateSession, NetBadge, MEDALS, PERIODS } from './historyUtils';
 import { IconCheck, IconShare, IconChevUp, IconChevDown, IconPencil, IconTrash, IconRefresh, IconX, IconArrow, IconPhone } from '../../ui/icons';
+import { exportHistoryToCsv } from '../../lib/csvExport';
+import { supabase } from '../../lib/supabase';
+import { PendingEditsPanel } from './PendingEditsPanel';
 
 interface SessionPlayer {
   id: string;
@@ -41,6 +44,8 @@ interface HistoryTabProps {
   failedSessionIds: string[];
   onRetryFailedSaves: () => void;
   retryingFailedSaves: boolean;
+  userId?: string | null;
+  onRefreshHistory?: () => void;
 }
 
 export function HistoryTab({
@@ -51,6 +56,8 @@ export function HistoryTab({
   failedSessionIds,
   onRetryFailedSaves,
   retryingFailedSaves,
+  userId,
+  onRefreshHistory,
 }: HistoryTabProps) {
   const [period, setPeriod] = useState<number | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -61,8 +68,61 @@ export function HistoryTab({
   const [copiedIds, setCopiedIds] = useState<Record<string, boolean>>({});
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [archiveLimit, setArchiveLimit] = useState(25);
+  const [rankFilter, setRankFilter] = useState<string | null>(null);
+  const [proposingFor, setProposingFor] = useState<string | null>(null);
+  const [proposalDraft, setProposalDraft] = useState<{ name: string; cashOut: string }[]>([]);
+  const [proposalNote, setProposalNote] = useState('');
+  const [proposalSaving, setProposalSaving] = useState(false);
+  const [proposalSent, setProposalSent] = useState<Record<string, boolean>>({});
 
-  const statsSource = history;
+  const allPlayerNames = useMemo(() => {
+    const names = new Set<string>();
+    for (const s of history) {
+      for (const p of s.players ?? []) names.add(p.name);
+    }
+    return Array.from(names).sort();
+  }, [history]);
+
+  const downloadCsv = () => {
+    const csv = exportHistoryToCsv(history);
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `poker-historia-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const openProposal = (session: Session) => {
+    const players = (session.players ?? []).map(p => ({ name: p.name, cashOut: String(p.cashOut) }));
+    setProposalDraft(players);
+    setProposalNote('');
+    setProposingFor(session.id);
+  };
+
+  const submitProposal = async (session: Session) => {
+    if (!userId) return;
+    setProposalSaving(true);
+    const players = proposalDraft.map(p => ({
+      player_name: p.name,
+      cash_out: Math.round(parseFloat(p.cashOut.replace(/[^0-9.]/g, '')) * 100) || 0,
+    }));
+    const { error } = await supabase.rpc('propose_session_edit', {
+      p_session_id: (session as { sourceSessionId?: string }).sourceSessionId ?? session.id,
+      p_payload: { players },
+      p_note: proposalNote.trim() || null,
+    });
+    setProposalSaving(false);
+    if (!error) {
+      setProposalSent(prev => ({ ...prev, [session.id]: true }));
+      setProposingFor(null);
+    }
+  };
+
+  const statsSource = rankFilter
+    ? history.filter(s => (s.players ?? []).some(p => p.name === rankFilter))
+    : history;
   const filteredHistory = period === null ? statsSource : statsSource.slice(-period);
   const stats = calculateAllTimeStats(filteredHistory);
   const sorted = [...history].reverse();
@@ -132,10 +192,37 @@ export function HistoryTab({
           </div>
         </div>
       )}
-      <div>
-        <h2 className="text-lg font-bold text-white tracking-tight">Historia</h2>
-        <p className="text-xs text-green-200/55 mt-0.5">{history.length} {pluralPL(history.length, 'sesja', 'sesje', 'sesji')} w archiwum · podsumowanie All time</p>
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <h2 className="text-lg font-bold text-white tracking-tight">Historia</h2>
+          <p className="text-xs text-green-200/55 mt-0.5">{history.length} {pluralPL(history.length, 'sesja', 'sesje', 'sesji')} w archiwum · podsumowanie All time</p>
+        </div>
+        {history.length > 0 && (
+          <button onClick={downloadCsv}
+            className="text-xs bg-black/30 border border-green-800 hover:border-green-600 text-green-200/70 hover:text-green-200 rounded-lg px-3 py-1.5 font-medium transition-colors shrink-0">
+            Eksport CSV
+          </button>
+        )}
       </div>
+
+      {allPlayerNames.length > 0 && (
+        <div className="flex items-center gap-2">
+          <label className="text-xs text-green-200/60 shrink-0">Ranking z:</label>
+          <select
+            value={rankFilter ?? ''}
+            onChange={e => { setRankFilter(e.target.value || null); setArchiveLimit(25); }}
+            className="flex-1 text-xs bg-black/30 border border-green-800 text-green-200/80 rounded-lg px-2 py-1.5 focus:outline-none focus:border-green-600">
+            <option value="">Wszyscy gracze</option>
+            {allPlayerNames.map(name => (
+              <option key={name} value={name}>{name}</option>
+            ))}
+          </select>
+          {rankFilter && (
+            <button onClick={() => setRankFilter(null)}
+              className="text-xs text-green-200/50 hover:text-green-200 shrink-0">✕</button>
+          )}
+        </div>
+      )}
 
       <div className="flex gap-1.5 flex-wrap">
         {PERIODS.map(({ label, value }) => {
@@ -179,6 +266,14 @@ export function HistoryTab({
           );
         })}
       </div>
+
+      {userId && (
+        <PendingEditsPanel
+          userId={userId}
+          ownedHistory={history.filter(s => !s.shared)}
+          onApplied={() => onRefreshHistory?.()}
+        />
+      )}
 
       <div className="space-y-2">
           <p className="text-xs text-green-200/60 uppercase tracking-wider px-1">Zapisane sesje</p>
@@ -253,7 +348,52 @@ export function HistoryTab({
                       </div>
                     )}
                     {!isEditing && isShared && (
-                      <p className="text-xs text-emerald-300/80">Ta sesja jest współdzielona przez połączone konto i jest tylko do podglądu.</p>
+                      <div className="space-y-2">
+                        <p className="text-xs text-emerald-300/80">Sesja współdzielona — tylko podgląd.</p>
+                        {userId && !proposalSent[session.id] && proposingFor !== session.id && (
+                          <button onClick={() => openProposal(session)}
+                            className="text-xs flex items-center gap-1.5 text-amber-300/80 hover:text-amber-200 transition-colors">
+                            <span>✎</span> Zaproponuj zmianę
+                          </button>
+                        )}
+                        {proposalSent[session.id] && (
+                          <p className="text-xs text-emerald-400">Propozycja wysłana — czeka na akceptację hosta.</p>
+                        )}
+                        {proposingFor === session.id && (
+                          <div className="space-y-2 mt-2">
+                            <p className="text-xs text-amber-300/70 uppercase tracking-wider">Zaproponuj nowe cash-outy:</p>
+                            {proposalDraft.map((p, idx) => (
+                              <div key={p.name} className="flex items-center gap-2">
+                                <span className="text-sm text-white flex-1">{p.name}</span>
+                                <input
+                                  type="number" min="0"
+                                  value={p.cashOut}
+                                  onChange={e => setProposalDraft(prev => prev.map((x, i) => i === idx ? { ...x, cashOut: e.target.value } : x))}
+                                  className="w-24 bg-black/40 border border-amber-800/60 rounded-lg px-2 py-1.5 text-white text-sm focus:outline-none focus:border-amber-500 transition-colors"
+                                />
+                                <span className="text-xs text-green-200/40">PLN</span>
+                              </div>
+                            ))}
+                            <input
+                              type="text"
+                              placeholder="Opcjonalna notatka dla hosta..."
+                              value={proposalNote}
+                              onChange={e => setProposalNote(e.target.value)}
+                              className="w-full bg-black/40 border border-amber-800/60 rounded-lg px-3 py-2 text-white text-xs focus:outline-none focus:border-amber-500 transition-colors placeholder:text-green-200/30"
+                            />
+                            <div className="flex gap-2">
+                              <button onClick={() => submitProposal(session)} disabled={proposalSaving}
+                                className="flex-1 text-xs bg-amber-800 hover:bg-amber-700 disabled:opacity-50 text-white rounded-xl py-2 font-semibold transition-colors">
+                                {proposalSaving ? 'Wysyłanie...' : 'Wyślij propozycję'}
+                              </button>
+                              <button onClick={() => setProposingFor(null)}
+                                className="text-xs text-green-200/50 hover:text-white px-3 transition-colors">
+                                Anuluj
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     )}
                     <div>
                       <p className="text-xs text-green-200/50 uppercase tracking-wider mb-2">Wyniki graczy</p>

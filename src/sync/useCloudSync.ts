@@ -69,6 +69,7 @@ interface UseCloudSyncProps {
   setSkipLiveSessionCloud: (v: boolean) => void;
   syncChannelNonce: number;
   setSyncChannelNonce: (fn: (n: number) => number) => void;
+  tokenRefreshedAt?: number;
   setSyncMeta: (fn: (prev: SyncMeta) => SyncMeta) => void;
   setPlayers: (fn: (prev: CloudPlayer[]) => CloudPlayer[]) => void;
   setHistory: (fn: (prev: CloudSession[]) => CloudSession[]) => void;
@@ -99,6 +100,7 @@ export function useCloudSync({
   setSkipLiveSessionCloud,
   syncChannelNonce,
   setSyncChannelNonce,
+  tokenRefreshedAt,
   setSyncMeta,
   setPlayers,
   setHistory,
@@ -116,6 +118,11 @@ export function useCloudSync({
   applyingRemoteSessionRef,
   notifyCloudFailure,
 }: UseCloudSyncProps) {
+  useEffect(() => {
+    if (!tokenRefreshedAt) return;
+    setSyncChannelNonce(n => n + 1);
+  }, [tokenRefreshedAt]);
+
   useEffect(() => {
     lastMergedLiveUpdatedAtRef.current = null;
     setSkipLiveSessionCloud(false);
@@ -471,7 +478,12 @@ export function useCloudSync({
       )
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'friend_invites' },
+        { event: '*', schema: 'public', table: 'friend_invites', filter: `requester_user_id=eq.${user.id}` },
+        scheduleRefresh
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'friend_invites', filter: `invitee_user_id=eq.${user.id}` },
         scheduleRefresh
       )
       .subscribe(status => {

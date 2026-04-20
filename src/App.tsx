@@ -18,6 +18,7 @@ import {
 import { logClientEvent } from './sync/telemetry';
 import { useCloudSync } from './sync/useCloudSync';
 import type { CloudPlayer } from './sync/useCloudSync';
+import { useUnreadBadges } from './sync/useUnreadBadges';
 import { useLiveSessionPush } from './sync/useLiveSessionPush';
 import {
   loadLS,
@@ -177,6 +178,7 @@ export default function App() {
     setSkipLiveSessionCloud,
     syncChannelNonce,
     setSyncChannelNonce,
+    tokenRefreshedAt,
     setSyncMeta,
     setPlayers,
     setHistory,
@@ -223,6 +225,17 @@ export default function App() {
     });
     return [...history, ...dedupedShared].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
   }, [history, sharedHistory]);
+
+  const { hasNewShared, hasNewInvites, markSharedSeen, markInvitesSeen } = useUnreadBadges({
+    userId: user?.id,
+    sharedHistory,
+    pendingInvites,
+  });
+
+  useEffect(() => {
+    if (tab === 'history') markSharedSeen();
+    if (tab === 'profile') markInvitesSeen();
+  }, [tab]);
 
   const totalPot = sessionPlayers.reduce((sum, sp) => sum + getTotalBuyIn(sp), 0);
   const addFailedCloudSave = (payload: FailedCloudSave) => {
@@ -746,7 +759,7 @@ export default function App() {
           {tab === 'players' && <PlayersTab players={players} sessionPlayers={sessionPlayers} onAddPlayer={addPlayer} onUpdatePlayer={updatePlayer} onRemovePlayer={removePlayer} onAddToSession={addToSession} onUnlinkPlayer={unlinkPlayer} currentUserId={user.id} accountByEmail={accountByEmail} outgoingInviteMetaByEmail={outgoingInviteMetaByEmail} accountProfile={accountProfile} accountEmail={(user.email || '').trim().toLowerCase()} />}
           {tab === 'session' && <SessionTab players={players} sessionPlayers={sessionPlayers} defaultBuyIn={defaultBuyIn} totalPot={totalPot} autoAddMeToSession={autoAddMeToSession} onToggleAutoAddMe={setAutoAddMeToSession} onDefaultBuyInChange={setDefaultBuyIn} onAddBuyIn={addBuyIn} onRemoveBuyIn={removeBuyIn} onRemoveFromSession={removeFromSession} onAddToSession={addToSession} onGoToSettlement={() => setTab('settlement')} />}
           {tab === 'settlement' && <SettlementTab players={players} sessionPlayers={sessionPlayers} transactions={transactions} settled={settled} totalPot={totalPot} onSetCashOut={setCashOut} onCalculate={handleCalculate} onResetSession={resetSession} onSaveAndFinish={saveAndFinishSession} savingSession={savingSession} saveStatus={saveStatus} />}
-          {tab === 'history' && <HistoryTab history={combinedHistory} onUpdateSession={updateSession} onDeleteSession={deleteSession} failedSyncCount={failedCloudSaves.length} failedSessionIds={failedCloudSaves.map(x => x.sessionId)} onRetryFailedSaves={retryFailedSaves} retryingFailedSaves={retryingFailedSaves} />}
+          {tab === 'history' && <HistoryTab history={combinedHistory} onUpdateSession={updateSession} onDeleteSession={deleteSession} failedSyncCount={failedCloudSaves.length} failedSessionIds={failedCloudSaves.map(x => x.sessionId)} onRetryFailedSaves={retryFailedSaves} retryingFailedSaves={retryingFailedSaves} userId={user.id} onRefreshHistory={handleManualRefresh} />}
           {tab === 'profile' && <ProfileView user={user} accountProfile={accountProfile} reloadAccountProfile={reloadAccountProfile} history={combinedHistory} players={players} pendingInvites={pendingInvites} outgoingInvites={outgoingInvites} onAcceptInvite={acceptInvite} onRejectInvite={rejectInvite} onCancelInvite={cancelInvite} onUnlinkPlayer={unlinkPlayer} onSignOut={handleSignOut} onRefresh={handleManualRefresh} onRenameSelf={syncSelfPlayerName} refreshBusy={manualRefreshBusy} syncMeta={syncMeta} onRetrySyncFailed={retryFailedSaves} retryingFailedSaves={retryingFailedSaves} failedCloudSavesCount={failedCloudSaves.length} />}
         </main>
 
@@ -771,6 +784,9 @@ export default function App() {
                     <span className="absolute -top-1.5 -right-2 min-w-[16px] h-4 px-1 rounded-full bg-yellow-500 text-[10px] leading-4 text-black font-bold">
                       {failedCloudSaves.length}
                     </span>
+                  )}
+                  {!showFailedSyncBadge && ((key === 'history' && hasNewShared) || (key === 'profile' && hasNewInvites)) && (
+                    <span className="absolute -top-0.5 -right-1 w-2 h-2 rounded-full bg-emerald-400" aria-label="Nowe" />
                   )}
                 </span>
                 <span className={`${isDisabled ? 'opacity-30' : ''} leading-tight`}>{label}</span>
