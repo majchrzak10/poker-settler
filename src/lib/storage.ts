@@ -37,7 +37,7 @@ export function normalizeDraftSessionPlayers(rows: unknown) {
   return list.map((sp: Record<string, unknown>) => ({
     playerId: sp.playerId,
     buyIns: Array.isArray(sp.buyIns) ? sp.buyIns.map((n: unknown) => Number(n) || 0) : [],
-    cashOut: typeof sp.cashOut === 'string' ? sp.cashOut : String(sp.cashOut ?? ''),
+    cashOut: !sp.cashOut ? '0' : String(sp.cashOut),
   }));
 }
 
