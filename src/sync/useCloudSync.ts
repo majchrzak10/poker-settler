@@ -239,7 +239,30 @@ export function useCloudSync({
       );
     });
 
-    if (!sharedRes.error) setSharedHistory(mapSharedParticipations(sharedData || []));
+    if (!sharedRes.error) {
+      const sharedSessionIds = Array.from(
+        new Set((sharedData || []).map(r => r.session_id).filter(Boolean))
+      ) as string[];
+      let sharedSessionPlayers: Record<string, unknown>[] = [];
+      let sharedTransfers: Record<string, unknown>[] = [];
+      if (sharedSessionIds.length) {
+        const [spRes, trRes] = await Promise.all([
+          supabase
+            .from('session_players')
+            .select('session_id, player_id, player_name, total_buy_in, cash_out')
+            .in('session_id', sharedSessionIds),
+          supabase
+            .from('transfers')
+            .select('session_id, from_name, to_name, amount')
+            .in('session_id', sharedSessionIds),
+        ]);
+        if (!spRes.error && spRes.data) sharedSessionPlayers = spRes.data;
+        if (!trRes.error && trRes.data) sharedTransfers = trRes.data;
+      }
+      setSharedHistory(
+        mapSharedParticipations(sharedData || [], sharedSessionPlayers, sharedTransfers)
+      );
+    }
     if (!invitesRes.error) {
       const myEmail = (user.email || '').trim().toLowerCase();
       const incoming = (invitesData || []).filter(
