@@ -196,7 +196,7 @@ export default function App() {
     if (sessionPlayers.length > 0) return;
     const selfPlayer = players.find(p => p.linked_user_id === user.id);
     if (!selfPlayer) return;
-    setSessionPlayers([{ playerId: selfPlayer.id, buyIns: [defaultBuyIn], cashOut: '' }]);
+    setSessionPlayers([{ playerId: selfPlayer.id, buyIns: [defaultBuyIn], cashOut: '0' }]);
   }, [user?.id, players, sessionPlayers.length, defaultBuyIn, autoAddMeToSession]);
   const combinedHistory = useMemo(() => {
     const ownedIds = new Set(history.map(s => s.id));
@@ -417,7 +417,7 @@ export default function App() {
   const addToSession = (playerId: string) => {
     if (sessionPlayers.some(sp => sp.playerId === playerId)) return;
     setSettled(false);
-    setSessionPlayers(prev => [...prev, { playerId, buyIns: [defaultBuyIn], cashOut: '' }]);
+    setSessionPlayers(prev => [...prev, { playerId, buyIns: [defaultBuyIn], cashOut: '0' }]);
   };
   const removeFromSession = (playerId: string) => { setSettled(false); setSessionPlayers(prev => prev.filter(sp => sp.playerId !== playerId)); };
   const addBuyIn = (playerId: string) => { setSettled(false); setSessionPlayers(prev => prev.map(sp => sp.playerId === playerId ? { ...sp, buyIns: [...sp.buyIns, defaultBuyIn] } : sp)); };
