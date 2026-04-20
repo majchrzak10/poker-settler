@@ -439,8 +439,34 @@ export default function App() {
     if (savingSession) return;
     const sessionId = generateId();
     const sessionDate = new Date().toISOString();
+    let freshPlayerById: Record<string, CloudPlayer> = playerById;
+    if (user) {
+      try {
+        const ids = sessionPlayers.map(sp => sp.playerId);
+        if (ids.length) {
+          const { data } = await supabase
+            .from('players')
+            .select('id, name, phone, email, linked_user_id')
+            .eq('owner_id', user.id)
+            .in('id', ids);
+          if (data) {
+            const next: Record<string, CloudPlayer> = { ...playerById };
+            for (const p of data) {
+              next[p.id] = {
+                id: p.id,
+                name: p.name,
+                phone: p.phone || '',
+                email: p.email || '',
+                linked_user_id: p.linked_user_id || null,
+              };
+            }
+            freshPlayerById = next;
+          }
+        }
+      } catch (_) {}
+    }
     const sessionPlrs = sessionPlayers.map(sp => {
-      const player = playerById[sp.playerId];
+      const player = freshPlayerById[sp.playerId];
       const totalBuyIn = getTotalBuyIn(sp);
       const cashOut = parseFloat(sp.cashOut) || 0;
       return { id: sp.playerId, name: player?.name ?? '?', phone: player?.phone ?? '', totalBuyIn, cashOut, netBalance: cashOut - totalBuyIn };
@@ -466,11 +492,11 @@ export default function App() {
       amount: plnToCents(t.amount),
     }));
     const linkedPlrs = sessionPlrs.filter(p => {
-      const linked = playerById[p.id]?.linked_user_id;
+      const linked = freshPlayerById[p.id]?.linked_user_id;
       return linked && linked !== user?.id;
     });
     const participationRows = linkedPlrs.map(p => ({
-      user_id: playerById[p.id].linked_user_id,
+      user_id: freshPlayerById[p.id].linked_user_id,
       session_id: sessionId,
       player_name: p.name,
       total_buy_in: plnToCents(p.totalBuyIn),

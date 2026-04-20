@@ -62,11 +62,8 @@ export function HistoryTab({
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [archiveLimit, setArchiveLimit] = useState(25);
 
-  const ownedHistoryForStats = useMemo(() => {
-    const owned = history.filter(s => !s.shared);
-    return owned.length > 0 ? owned : history;
-  }, [history]);
-  const filteredHistory = period === null ? ownedHistoryForStats : ownedHistoryForStats.slice(-period);
+  const statsSource = history;
+  const filteredHistory = period === null ? statsSource : statsSource.slice(-period);
   const stats = calculateAllTimeStats(filteredHistory);
   const sorted = [...history].reverse();
   const drilldownSessions = sorted;
@@ -143,7 +140,7 @@ export function HistoryTab({
       <div className="flex gap-1.5 flex-wrap">
         {PERIODS.map(({ label, value }) => {
           const active = period === value;
-          const available = value === null || ownedHistoryForStats.length >= value;
+          const available = value === null || statsSource.length >= value;
           return (
             <button key={label} onClick={() => { setPeriod(value); setArchiveLimit(25); }} disabled={!available}
               className={`px-3 py-1 rounded-full text-xs font-medium transition-colors border ${active ? 'bg-rose-800 border-rose-800 text-white' : available ? 'bg-black/30 border-green-800 text-green-200/70 hover:border-green-600 hover:text-green-200' : 'bg-black/10 border-green-900/40 text-green-200/20 cursor-not-allowed'}`}>
@@ -153,7 +150,7 @@ export function HistoryTab({
         })}
       </div>
       <p className="text-xs text-green-200/60 uppercase tracking-wider px-1">
-        {period === null ? 'All time' : `Ostatnie ${Math.min(period, ownedHistoryForStats.length)} ${pluralPL(Math.min(period, ownedHistoryForStats.length), 'gra', 'gry', 'gier')}`}
+        {period === null ? 'All time' : `Ostatnie ${Math.min(period, statsSource.length)} ${pluralPL(Math.min(period, statsSource.length), 'gra', 'gry', 'gier')}`}
       </p>
 
       <div className="space-y-2">

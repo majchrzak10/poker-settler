@@ -27,19 +27,21 @@ interface StatEntry {
 export function calculateAllTimeStats(history: Session[]): StatEntry[] {
   const map = history.reduce<Record<string, StatEntry>>((acc, session) => {
     for (const p of session.players ?? []) {
-      if (!acc[p.id])
-        acc[p.id] = {
-          id: p.id,
+      const key = String(p.name || '').trim().toLowerCase();
+      if (!key) continue;
+      if (!acc[key])
+        acc[key] = {
+          id: key,
           name: p.name,
           gamesPlayed: 0,
           allTimeBuyIn: 0,
           allTimeCashOut: 0,
           totalNetBalance: 0,
         };
-      acc[p.id].gamesPlayed += 1;
-      acc[p.id].allTimeBuyIn += p.totalBuyIn;
-      acc[p.id].allTimeCashOut += p.cashOut;
-      acc[p.id].totalNetBalance += p.netBalance;
+      acc[key].gamesPlayed += 1;
+      acc[key].allTimeBuyIn += p.totalBuyIn;
+      acc[key].allTimeCashOut += p.cashOut;
+      acc[key].totalNetBalance += p.netBalance;
     }
     return acc;
   }, {});
