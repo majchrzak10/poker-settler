@@ -151,3 +151,28 @@ export async function persistSessionUpdateCloud(
   await insertRows('transfers', transferRows);
   await insertRows('participations', participationRows);
 }
+
+export async function persistSessionDeleteCloud(
+  sessionId: string,
+  ownerId: string
+): Promise<void> {
+  const { error } = await supabase.rpc('delete_session_atomic', {
+    p_session_id: sessionId,
+    p_owner_id: ownerId,
+  } as never);
+  if (!error) return;
+  if (!isRpcMissingError(error)) throw error;
+
+  const { error: e1 } = await supabase.from('transfers').delete().eq('session_id', sessionId);
+  if (e1) throw e1;
+  const { error: e2 } = await supabase.from('session_players').delete().eq('session_id', sessionId);
+  if (e2) throw e2;
+  const { error: e3 } = await supabase.from('participations').delete().eq('session_id', sessionId);
+  if (e3) throw e3;
+  const { error: e4 } = await supabase
+    .from('sessions')
+    .delete()
+    .eq('id', sessionId)
+    .eq('owner_id', ownerId);
+  if (e4) throw e4;
+}

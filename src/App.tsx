@@ -7,7 +7,11 @@ import {
   SYNC_META_KEY,
   ONBOARDING_KEY,
 } from './app/keys';
-import { persistSessionSaveCloud, persistSessionUpdateCloud } from './sync/persistSession';
+import {
+  persistSessionDeleteCloud,
+  persistSessionSaveCloud,
+  persistSessionUpdateCloud,
+} from './sync/persistSession';
 import {
   isFriendLinkRpcMissing,
   sanitizeSyncMeta,
@@ -672,30 +676,19 @@ export default function App() {
     const prevEntry = history.find(s => s.id === id);
     setHistory(prev => prev.filter(s => s.id !== id));
     if (!user) return;
-    const { error: e1 } = await supabase.from('transfers').delete().eq('session_id', id);
-    if (e1) {
-      if (prevEntry) setHistory(prev => [...prev, prevEntry].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()));
-      notifyCloudFailure(e1.message);
-      return;
-    }
-    const { error: e2 } = await supabase.from('session_players').delete().eq('session_id', id);
-    if (e2) {
-      if (prevEntry) setHistory(prev => [...prev, prevEntry].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()));
-      notifyCloudFailure(e2.message);
-      return;
-    }
-    const { error: e3 } = await supabase.from('participations').delete().eq('session_id', id);
-    if (e3) {
-      if (prevEntry) setHistory(prev => [...prev, prevEntry].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()));
-      notifyCloudFailure(e3.message);
-      return;
-    }
-    const { error: e4 } = await supabase.from('sessions').delete().eq('id', id);
-    if (e4 && prevEntry) {
-      setHistory(prev => [...prev, prevEntry].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()));
-      notifyCloudFailure(e4.message);
-    } else if (!e4) {
+    try {
+      await persistSessionDeleteCloud(id, user.id);
       void refreshCloudData();
+    } catch (e) {
+      const msg = (e as AppError)?.message || String(e);
+      if (prevEntry) {
+        setHistory(prev =>
+          [...prev, prevEntry].sort(
+            (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
+          )
+        );
+      }
+      notifyCloudFailure(msg);
     }
   };
   const handleSignOut = async () => {
