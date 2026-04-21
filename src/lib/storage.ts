@@ -34,11 +34,24 @@ export function useDebouncedLocalStorage(key: string, value: unknown, delay = 22
 
 export function normalizeDraftSessionPlayers(rows: unknown) {
   const list = Array.isArray(rows) ? rows : [];
-  return list.map((sp: Record<string, unknown>) => ({
-    playerId: sp.playerId,
-    buyIns: Array.isArray(sp.buyIns) ? sp.buyIns.map((n: unknown) => Number(n) || 0) : [],
-    cashOut: !sp.cashOut ? '0' : String(sp.cashOut),
-  }));
+  return list
+    .map((sp: Record<string, unknown>) => {
+      const playerId = typeof sp.playerId === 'string' ? sp.playerId.trim() : '';
+      if (!playerId) return null;
+      const buyIns = Array.isArray(sp.buyIns)
+        ? sp.buyIns
+            .map((n: unknown) => {
+              const num = Number(n);
+              return Number.isFinite(num) && num > 0 ? num : 0;
+            })
+            .filter(n => n > 0)
+        : [];
+      const rawCashOut = !sp.cashOut ? '0' : String(sp.cashOut);
+      const cashNum = Number(rawCashOut);
+      const cashOut = Number.isFinite(cashNum) && cashNum >= 0 ? rawCashOut : '0';
+      return { playerId, buyIns, cashOut };
+    })
+    .filter((sp): sp is { playerId: string; buyIns: number[]; cashOut: string } => sp !== null);
 }
 
 export function buildDraftHash(defaultBuyIn: number, sessionPlayers: unknown[]) {

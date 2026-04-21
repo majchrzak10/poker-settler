@@ -224,6 +224,7 @@ export default function App() {
     recordSyncAttempt();
     let success = 0;
     let failed = 0;
+    let dropped = 0;
     let lastErr: string | null = null;
     for (const item of failedCloudSaves) {
       try {
@@ -234,20 +235,31 @@ export default function App() {
         const err = e as AppError;
         if (err?.code === 'MISSING_SESSION_PLAYERS' || isSessionPlayerFkError(err)) {
           removeFailedCloudSave(item.sessionId);
+          dropped++;
+        } else {
+          failed++;
         }
-        failed++;
         lastErr = err?.message || String(e);
         console.error('Retry cloud save failed:', e);
       }
     }
     setRetryingFailedSaves(false);
     if (success > 0) recordSyncSuccess();
-    if (failed > 0) recordSyncError(lastErr);
-    if (success > 0 && failed === 0) {
+    if (failed > 0 || dropped > 0) recordSyncError(lastErr);
+    if (dropped > 0) {
+      notifyCloudFailure(
+        dropped === 1
+          ? 'Jedna zaległa sesja odrzucona: część graczy nie istnieje już w chmurze.'
+          : `Odrzucone zaległe sesje (${dropped}): część graczy nie istnieje już w chmurze.`
+      );
+    }
+    if (success > 0 && failed === 0 && dropped === 0) {
       setSaveStatus({ type: 'ok', message: 'Udało się dosłać wszystkie zaległe sesje do chmury.' });
+    } else if (success > 0 && failed === 0 && dropped > 0) {
+      setSaveStatus({ type: 'error', message: 'Część zaległych sesji została odrzucona (brakujący gracze).' });
     } else if (success > 0) {
       setSaveStatus({ type: 'error', message: 'Część zaległych sesji nadal czeka na zapis do chmury.' });
-    } else if (failed > 0) {
+    } else if (failed > 0 || dropped > 0) {
       setSaveStatus({ type: 'error', message: 'Nie udało się dosłać zaległych sesji. Spróbuj ponownie później.' });
     }
   };
@@ -422,7 +434,15 @@ export default function App() {
   const removeFromSession = (playerId: string) => { setSettled(false); setSessionPlayers(prev => prev.filter(sp => sp.playerId !== playerId)); };
   const addBuyIn = (playerId: string) => { setSettled(false); setSessionPlayers(prev => prev.map(sp => sp.playerId === playerId ? { ...sp, buyIns: [...sp.buyIns, defaultBuyIn] } : sp)); };
   const removeBuyIn = (playerId: string) => { setSettled(false); setSessionPlayers(prev => prev.map(sp => sp.playerId === playerId && sp.buyIns.length > 1 ? { ...sp, buyIns: sp.buyIns.slice(0, -1) } : sp)); };
-  const setCashOut = (playerId: string, value: string) => { setSettled(false); setSessionPlayers(prev => prev.map(sp => sp.playerId === playerId ? { ...sp, cashOut: value.replace(/[^0-9.]/g, '') } : sp)); };
+  const setCashOut = (playerId: string, value: string) => {
+    const cleaned = value.replace(/[^0-9.]/g, '');
+    const firstDot = cleaned.indexOf('.');
+    const normalized = firstDot === -1
+      ? cleaned
+      : cleaned.slice(0, firstDot + 1) + cleaned.slice(firstDot + 1).replace(/\./g, '');
+    setSettled(false);
+    setSessionPlayers(prev => prev.map(sp => sp.playerId === playerId ? { ...sp, cashOut: normalized } : sp));
+  };
 
   const handleCalculate = () => {
     const entries = sessionPlayers.flatMap(sp => {
@@ -433,7 +453,14 @@ export default function App() {
     setSettled(true);
   };
 
-  const resetSession = () => { setSessionPlayers([]); setTransactions([]); setSettled(false); setTab('session'); };
+  const resetSession = () => {
+    setSessionPlayers([]);
+    setTransactions([]);
+    setSettled(false);
+    setTab('session');
+    lastDraftHashRef.current = buildDraftHash(defaultBuyIn, []);
+    lastMergedLiveUpdatedAtRef.current = null;
+  };
 
   const saveAndFinishSession = async () => {
     if (savingSession) return;
