@@ -670,6 +670,7 @@ export default function App() {
     }
   };
   const handleSignOut = async () => {
+    const prevUserId = user?.id;
     await supabase.auth.signOut();
     setPlayers([]);
     setHistory([]);
@@ -696,6 +697,10 @@ export default function App() {
       localStorage.removeItem('poker_sessions_history');
       localStorage.removeItem(FAILED_CLOUD_SAVES_KEY);
       localStorage.removeItem(SYNC_META_KEY);
+      if (prevUserId) {
+        localStorage.removeItem(`poker_live_push_${prevUserId}`);
+        localStorage.removeItem(`poker_live_push_failed_${prevUserId}`);
+      }
     } catch (_) {}
     setTab('session');
   };

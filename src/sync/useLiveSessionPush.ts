@@ -63,12 +63,18 @@ export function useLiveSessionPush({
             'Supabase: brak tabeli live_session_state. W Dashboard → SQL uruchom plik supabase/migrations/002_live_session_state.sql'
           );
         } else {
+          try {
+            saveLS(`poker_live_push_failed_${user.id}`, { at: new Date().toISOString() });
+          } catch (_) {}
           recordSyncError(error.message || 'Błąd synchronizacji aktywnej sesji');
         }
       } else {
         lastDraftHashRef.current = draftHash;
         lastMergedLiveUpdatedAtRef.current = payload.updated_at;
         saveLS(`poker_live_push_${user.id}`, { updated_at: payload.updated_at });
+        try {
+          localStorage.removeItem(`poker_live_push_failed_${user.id}`);
+        } catch (_) {}
       }
     }, 350);
     return () => clearTimeout(timer);

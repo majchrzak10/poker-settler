@@ -319,6 +319,10 @@ export function useCloudSync({
         updated_at: string;
       } | null;
       const lastLocalPushAt = lastPushMeta?.updated_at;
+      const pushFailedMeta = loadLS(`poker_live_push_failed_${user.id}`, null) as {
+        at: string;
+      } | null;
+      const hasPendingFailedPush = !!pushFailedMeta?.at;
       const remoteIsNewerThanOurPush =
         !lastLocalPushAt || isoToMs(remoteTs) > isoToMs(lastLocalPushAt);
       const mergedRef = lastMergedLiveUpdatedAtRef.current;
@@ -328,7 +332,11 @@ export function useCloudSync({
         const remoteDefaultBuyIn = Number(liveData.default_buy_in) || 50;
         const remoteSessionPlayers = normalizeDraftSessionPlayers(liveData.session_players);
         const localNorm = normalizeDraftSessionPlayers(sessionPlayersRef.current);
-        if (!lastLocalPushAt && localNorm.length > 0 && remoteSessionPlayers.length === 0) {
+        if (hasPendingFailedPush && localNorm.length > 0) {
+          // Lokalne zmiany nie zostały wypchnięte (błąd sieci). Nie nadpisuj;
+          // nie aktualizuj lastDraftHashRef — pozwól useLiveSessionPush spróbować ponownie.
+          lastMergedLiveUpdatedAtRef.current = remoteTs;
+        } else if (!lastLocalPushAt && localNorm.length > 0 && remoteSessionPlayers.length === 0) {
           lastMergedLiveUpdatedAtRef.current = remoteTs;
           lastDraftHashRef.current = buildDraftHash(
             defaultBuyInRef.current,
