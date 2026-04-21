@@ -84,6 +84,8 @@ interface UseCloudSyncProps {
   lastDraftHashRef: MutableRefObject<string | null>;
   lastMergedLiveUpdatedAtRef: MutableRefObject<string | null>;
   applyingRemoteSessionRef: MutableRefObject<boolean>;
+  pendingPlayerIdsRef: MutableRefObject<Set<string>>;
+  failedCloudSaves: { sessionId: string }[];
   notifyCloudFailure: (msg: string) => void;
 }
 
@@ -114,6 +116,8 @@ export function useCloudSync({
   lastDraftHashRef,
   lastMergedLiveUpdatedAtRef,
   applyingRemoteSessionRef,
+  pendingPlayerIdsRef,
+  failedCloudSaves,
   notifyCloudFailure,
 }: UseCloudSyncProps) {
   useEffect(() => {
@@ -195,7 +199,8 @@ export function useCloudSync({
     }));
     setPlayers(prev => {
       const seen = new Set(cloudPlayers.map(p => p.id));
-      const extras = prev.filter(p => !seen.has(p.id));
+      const pending = pendingPlayerIdsRef.current;
+      const extras = prev.filter(p => !seen.has(p.id) && pending.has(p.id));
       return extras.length ? [...cloudPlayers, ...extras] : cloudPlayers;
     });
 
@@ -230,9 +235,12 @@ export function useCloudSync({
     });
 
     const cloudHistory = (sData || []).map(mapSessionRow);
+    const failedIds = new Set(failedCloudSaves.map(f => f.sessionId));
     setHistory(prev => {
       const ids = new Set(cloudHistory.map(s => s.id));
-      const localOnly = prev.filter(s => !ids.has(s.id) && !String(s.id).startsWith('shared:'));
+      const localOnly = prev.filter(
+        s => !ids.has(s.id) && !String(s.id).startsWith('shared:') && failedIds.has(s.id)
+      );
       if (localOnly.length === 0) return cloudHistory;
       return [...cloudHistory, ...localOnly].sort(
         (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()

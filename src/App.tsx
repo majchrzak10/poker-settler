@@ -81,6 +81,7 @@ export default function App() {
   const sessionPlayersRef = useRef<SessionPlayer[]>(sessionPlayers);
   const defaultBuyInRef = useRef<number>(defaultBuyIn);
   const lastSyncedProfileNameRef = useRef<string | null>(null);
+  const pendingPlayerIdsRef = useRef<Set<string>>(new Set());
 
   useDebouncedLocalStorage('poker_players', players);
   useDebouncedLocalStorage('poker_session', sessionPlayers);
@@ -199,6 +200,8 @@ export default function App() {
     lastDraftHashRef,
     lastMergedLiveUpdatedAtRef,
     applyingRemoteSessionRef,
+    pendingPlayerIdsRef,
+    failedCloudSaves,
     notifyCloudFailure,
   });
 
@@ -319,9 +322,11 @@ export default function App() {
     }
     const id = generateId();
     const row: CloudPlayer = { id, name, phone, email: emailNorm, linked_user_id: null };
+    pendingPlayerIdsRef.current.add(id);
     setPlayers(prev => [...prev, row]);
-    if (!user) return;
+    if (!user) { pendingPlayerIdsRef.current.delete(id); return; }
     const { error } = await supabase.from('players').insert({ id, owner_id: user.id, name, phone: phone || null, email: emailNorm || null });
+    pendingPlayerIdsRef.current.delete(id);
     if (error) {
       setPlayers(prev => prev.filter(p => p.id !== id));
       if (error.code === '23505') {
