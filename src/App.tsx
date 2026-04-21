@@ -153,6 +153,22 @@ export default function App() {
     };
   }, [user?.id, accountProfile, players, reloadAccountProfile]);
 
+  useEffect(() => {
+    if (!user?.id || !accountProfile?.display_name) return;
+    const profileName = accountProfile.display_name.trim();
+    if (!profileName) return;
+    const self = players.find(p => p.linked_user_id === user.id);
+    if (!self || self.name === profileName) return;
+    void syncSelfPlayerName(profileName);
+  }, [user?.id, accountProfile?.display_name, players]);
+
+  useEffect(() => {
+    if (!user?.id || players.length === 0) return;
+    const playerIds = new Set(players.map(p => p.id));
+    if (sessionPlayers.every(sp => playerIds.has(sp.playerId))) return;
+    setSessionPlayers(prev => prev.filter(sp => playerIds.has(sp.playerId)));
+  }, [user?.id, players]);
+
   const { refreshCloudData } = (useCloudSync as unknown as (props: Record<string, unknown>) => { refreshCloudData: () => Promise<void> })({
     user,
     players,
