@@ -70,7 +70,7 @@ export function SettlementTab({
 
   const diff = totalPot - totalCashOut;
   const isBalanced = Math.abs(diff) < 0.01 && sessionPlayers.length > 0;
-  const allFilled = sessionPlayers.every(sp => sp.cashOut !== '');
+  const allFilled = sessionPlayers.length > 0;
   const progress = totalPot > 0 ? Math.min((totalCashOut / totalPot) * 100, 100) : 0;
 
   const buildReport = () => {
