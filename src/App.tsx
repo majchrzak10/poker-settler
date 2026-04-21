@@ -80,6 +80,7 @@ export default function App() {
   const lastMergedLiveUpdatedAtRef = useRef<string | null>(null);
   const sessionPlayersRef = useRef<SessionPlayer[]>(sessionPlayers);
   const defaultBuyInRef = useRef<number>(defaultBuyIn);
+  const lastSyncedProfileNameRef = useRef<string | null>(null);
 
   useDebouncedLocalStorage('poker_players', players);
   useDebouncedLocalStorage('poker_session', sessionPlayers);
@@ -154,11 +155,18 @@ export default function App() {
   }, [user?.id, accountProfile, players, reloadAccountProfile]);
 
   useEffect(() => {
+    lastSyncedProfileNameRef.current = null;
+  }, [user?.id]);
+
+  useEffect(() => {
     if (!user?.id || !accountProfile?.display_name) return;
     const profileName = accountProfile.display_name.trim();
     if (!profileName) return;
+    if (lastSyncedProfileNameRef.current === profileName) return;
     const self = players.find(p => p.linked_user_id === user.id);
-    if (!self || self.name === profileName) return;
+    if (!self) return;
+    if (self.name === profileName) { lastSyncedProfileNameRef.current = profileName; return; }
+    lastSyncedProfileNameRef.current = profileName;
     void syncSelfPlayerName(profileName);
   }, [user?.id, accountProfile?.display_name, players]);
 
