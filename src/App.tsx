@@ -286,6 +286,13 @@ export default function App() {
         return;
       }
     }
+    if (emailNorm) {
+      const dupEmail = players.some(p => normalizeEmail(p.email) === emailNorm);
+      if (dupEmail) {
+        setCloudBanner('Masz już gracza z tym adresem email. Zmień email albo edytuj istniejący wpis.');
+        return;
+      }
+    }
     const id = generateId();
     const row: CloudPlayer = { id, name, phone, email: emailNorm, linked_user_id: null };
     setPlayers(prev => [...prev, row]);
@@ -320,6 +327,13 @@ export default function App() {
       const dup = players.some(p => p.id !== id && normalizePhoneDigits(p.phone) === phoneDigits);
       if (dup) {
         setCloudBanner('Masz już innego gracza z tym numerem telefonu.');
+        return;
+      }
+    }
+    if (emailNorm) {
+      const dupEmail = players.some(p => p.id !== id && normalizeEmail(p.email) === emailNorm);
+      if (dupEmail) {
+        setCloudBanner('Masz już innego gracza z tym adresem email.');
         return;
       }
     }
@@ -660,6 +674,29 @@ export default function App() {
     setPlayers([]);
     setHistory([]);
     setSharedHistory([]);
+    setSessionPlayers([]);
+    setTransactions([]);
+    setSettled(false);
+    setDefaultBuyIn(50);
+    setFailedCloudSaves([]);
+    setPendingInvites([]);
+    setOutgoingInvites([]);
+    setOutgoingInviteMetaByEmail({});
+    setAccountByEmail({});
+    setSyncMeta({ lastAttempt: null, lastSuccess: null, lastError: null });
+    setSaveStatus(null);
+    setCloudBanner(null);
+    lastDraftHashRef.current = buildDraftHash(50, []);
+    lastMergedLiveUpdatedAtRef.current = null;
+    applyingRemoteSessionRef.current = false;
+    try {
+      localStorage.removeItem('poker_players');
+      localStorage.removeItem('poker_session');
+      localStorage.removeItem('poker_default_buyin');
+      localStorage.removeItem('poker_sessions_history');
+      localStorage.removeItem(FAILED_CLOUD_SAVES_KEY);
+      localStorage.removeItem(SYNC_META_KEY);
+    } catch (_) {}
     setTab('session');
   };
   const handleManualRefresh = async () => {
