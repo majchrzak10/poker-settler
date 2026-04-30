@@ -422,6 +422,7 @@ export function useCloudSync({
     let inFlight = false;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let reconnectScheduled = false;
+    let destroyed = false;
     const scheduleRefresh = () => {
       if (timer) clearTimeout(timer);
       timer = setTimeout(async () => {
@@ -435,7 +436,7 @@ export function useCloudSync({
       }, 300);
     };
     const scheduleReconnect = (reason: string) => {
-      if (reconnectScheduled) return;
+      if (destroyed || reconnectScheduled) return;
       reconnectScheduled = true;
       reconnectTimer = setTimeout(() => {
         reconnectScheduled = false;
@@ -516,6 +517,7 @@ export function useCloudSync({
     document.addEventListener('visibilitychange', onVisibility);
 
     return () => {
+      destroyed = true;
       if (timer) clearTimeout(timer);
       if (reconnectTimer) clearTimeout(reconnectTimer);
       clearInterval(poll);
