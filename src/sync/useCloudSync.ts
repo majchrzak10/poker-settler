@@ -398,17 +398,17 @@ export function useCloudSync({
         if (!isMissing) {
           notifyCloudFailure(rpcErr.message);
         } else {
-          const existing = players.find(p => p.linked_user_id === user.id);
-          if (!existing) {
-            const fallbackName = user.email?.split('@')[0] || 'Ja';
-            await supabase.from('players').insert({
+          const fallbackName = user.email?.split('@')[0] || 'Ja';
+          await supabase.from('players').upsert(
+            {
               id: generateId(),
               owner_id: user.id,
               linked_user_id: user.id,
               name: fallbackName,
               email: (user.email || '').toLowerCase() || null,
-            });
-          }
+            },
+            { onConflict: 'owner_id,linked_user_id', ignoreDuplicates: true }
+          );
         }
       }
       void refreshCloudData();
