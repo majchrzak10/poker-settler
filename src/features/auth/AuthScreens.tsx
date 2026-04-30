@@ -82,8 +82,13 @@ export function AuthScreen() {
       setLoading(false);
       return;
     }
+    if (regPhone.length !== 11) {
+      setError('Podaj pełny numer telefonu (9 cyfr).');
+      setLoading(false);
+      return;
+    }
     const displayName = name.trim() || email.trim().split('@')[0];
-    const phoneDigits = regPhone.replace(/\s/g, '') || undefined;
+    const phoneDigits = regPhone.replace(/\D/g, '');
     const { data, error: authError } = await supabase.auth.signUp({
       email: email.trim(),
       password,
@@ -194,19 +199,27 @@ export function AuthScreen() {
                 className="w-full bg-black/40 rounded-xl px-4 py-3 text-sm text-white placeholder-green-700 border border-green-800 focus:outline-none focus:border-rose-600 transition-colors"
               />
             )}
-            {mode === 'register' && (
-              <input
-                type="tel"
-                inputMode="numeric"
-                value={regPhone}
-                onChange={(e: ChangeEvent<HTMLInputElement>) =>
-                  setRegPhone(formatPhone(e.target.value))
-                }
-                placeholder="Telefon (opcjonalnie)"
-                maxLength={11}
-                className="w-full bg-black/40 rounded-xl px-4 py-3 text-sm text-white placeholder-green-700 border border-green-800 focus:outline-none focus:border-rose-600 transition-colors"
-              />
-            )}
+            {mode === 'register' && (() => {
+              const phoneError = regPhone.length > 0 && regPhone.length < 11;
+              return (
+                <div className="space-y-1">
+                  <input
+                    type="tel"
+                    inputMode="numeric"
+                    value={regPhone}
+                    onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                      setRegPhone(formatPhone(e.target.value))
+                    }
+                    placeholder="Numer telefonu *"
+                    maxLength={11}
+                    className={`w-full bg-black/40 rounded-xl px-4 py-3 text-sm text-white placeholder-green-700 border transition-colors focus:outline-none ${phoneError ? 'border-red-500' : 'border-green-800 focus:border-rose-600'}`}
+                  />
+                  {phoneError && (
+                    <p className="text-xs text-red-400 px-1">Podaj pełny, 9-cyfrowy numer telefonu</p>
+                  )}
+                </div>
+              );
+            })()}
             {error && <p className="text-xs text-rose-400 px-1">{error}</p>}
             {success && <p className="text-xs text-emerald-400 px-1">{success}</p>}
             <button
