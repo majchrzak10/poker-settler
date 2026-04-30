@@ -66,7 +66,7 @@ export function PlayersTab({
   const phoneError = phone.length > 0 && phone.length < 11;
   const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim().toLowerCase());
   const emailError = email.trim().length > 0 && !emailValid;
-  const canSubmit = name.trim().length > 0 && phoneValid && emailValid;
+  const canSubmit = name.trim().length > 0 && !phoneError && !emailError;
 
   const draftPhoneDigits = draft.phone.replace(/\D/g, '');
   const draftPhoneValid = draft.phone.length === 11;
@@ -74,7 +74,7 @@ export function PlayersTab({
   const draftPhoneOkSelf = draftPhoneDigits.length === 0 || draftPhoneDigits.length === 9;
   const draftEmailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test((draft.email || '').trim().toLowerCase());
   const draftEmailError = (draft.email || '').trim().length > 0 && !draftEmailValid;
-  const canSaveDraft = draft.name.trim().length > 0 && draftPhoneValid && draftEmailValid;
+  const canSaveDraft = draft.name.trim().length > 0 && !draftPhoneError && !draftEmailError;
 
   const handlePhoneChange = (e: ChangeEvent<HTMLInputElement>) => setPhone(formatPhone(e.target.value));
 
@@ -119,19 +119,19 @@ export function PlayersTab({
         <input value={name} onChange={(e: ChangeEvent<HTMLInputElement>) => setName(e.target.value)} placeholder="Imię gracza *"
           className="w-full bg-black/40 rounded-xl px-4 py-3 text-sm text-white placeholder-green-700 border border-green-800 focus:outline-none focus:border-rose-600 transition-colors" />
         <div className="space-y-1">
-          <input value={phone} onChange={handlePhoneChange} placeholder="Numer telefonu *" type="tel" inputMode="numeric" maxLength={11}
+          <input value={phone} onChange={handlePhoneChange} placeholder="Numer telefonu (opcjonalnie)" type="tel" inputMode="numeric" maxLength={11}
             className={`w-full bg-black/40 rounded-xl px-4 py-3 text-sm text-white placeholder-green-700 border transition-colors focus:outline-none ${phoneError ? 'border-red-500' : 'border-green-800 focus:border-rose-600'}`} />
           {phoneError && <p className="text-xs text-red-400 px-1">Podaj pełny, 9-cyfrowy numer telefonu</p>}
         </div>
         <div className="space-y-1">
-          <input value={email} onChange={(e: ChangeEvent<HTMLInputElement>) => setEmail(e.target.value)} placeholder="Email znajomego *" type="email" autoComplete="off"
+          <input value={email} onChange={(e: ChangeEvent<HTMLInputElement>) => setEmail(e.target.value)} placeholder="Email znajomego (opcjonalnie)" type="email" autoComplete="off"
             className={`w-full bg-black/40 rounded-xl px-4 py-3 text-sm text-white placeholder-green-700 border transition-colors focus:outline-none ${emailError ? 'border-red-500' : 'border-green-800 focus:border-rose-600'}`} />
           {emailError && <p className="text-xs text-red-400 px-1">Podaj poprawny adres email</p>}
           {!emailError && email.trim().length > 0 && <p className="text-xs text-green-300/50 px-1">Jeśli email nie ma konta, gracz zostanie dodany ze statusem „Brak konta" (bez zaproszenia).</p>}
         </div>
         <button type="submit" disabled={!canSubmit}
           className="w-full flex items-center justify-center gap-2 bg-rose-800 hover:bg-rose-900 disabled:opacity-40 disabled:cursor-not-allowed rounded-xl py-3 text-sm font-semibold transition-colors">
-          <IconUserPlus /> Dodaj gracza i wyślij zaproszenie
+          <IconUserPlus /> Dodaj gracza
         </button>
       </form>
 

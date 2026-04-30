@@ -644,9 +644,27 @@ export default function App() {
         to_name: t.to,
         amount: plnToCents(t.amount),
       }));
+      let freshPlayerById: Record<string, CloudPlayer> = playerById;
+      const playerIds = (updated.players ?? []).map(p => p.id).filter(Boolean);
+      if (playerIds.length) {
+        try {
+          const { data } = await supabase
+            .from('players')
+            .select('id, name, phone, email, linked_user_id')
+            .eq('owner_id', user.id)
+            .in('id', playerIds);
+          if (data) {
+            const next: Record<string, CloudPlayer> = { ...playerById };
+            for (const p of data) {
+              next[p.id] = { id: p.id, name: p.name, phone: p.phone || '', email: p.email || '', linked_user_id: p.linked_user_id || null };
+            }
+            freshPlayerById = next;
+          }
+        } catch (_) {}
+      }
       const participationRows = [];
       for (const p of (updated.players ?? [])) {
-        const pl = playerById[p.id];
+        const pl = freshPlayerById[p.id];
         if (pl?.linked_user_id && pl.linked_user_id !== user.id) {
           participationRows.push({
             user_id: pl.linked_user_id,
