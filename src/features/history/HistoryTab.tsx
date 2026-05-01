@@ -244,8 +244,17 @@ export function HistoryTab({
         <p className="text-xs text-green-200/60 uppercase tracking-wider px-1">Bilans graczy</p>
         {stats.length === 0 ? (
           <div className="text-center py-12 bg-black/20 rounded-2xl border border-dashed border-green-900">
-            <p className="text-green-200/50 text-sm">Brak danych.</p>
-            <p className="text-green-200/30 text-xs mt-1">Zagraj i zapisz pierwszą sesję.</p>
+            {rankFilter ? (
+              <>
+                <p className="text-green-200/50 text-sm">Brak gier z „{rankFilter}".</p>
+                <p className="text-green-200/30 text-xs mt-1">Zmień filtr lub wybierz „Wszyscy gracze".</p>
+              </>
+            ) : (
+              <>
+                <p className="text-green-200/50 text-sm">Brak danych.</p>
+                <p className="text-green-200/30 text-xs mt-1">Zagraj i zapisz pierwszą sesję.</p>
+              </>
+            )}
           </div>
         ) : stats.map((s, idx) => {
           return (
@@ -279,8 +288,17 @@ export function HistoryTab({
           <p className="text-xs text-green-200/60 uppercase tracking-wider px-1">Zapisane sesje</p>
           {drilldownSessions.length === 0 ? (
             <div className="text-center py-12 bg-black/20 rounded-2xl border border-dashed border-green-900">
-              <p className="text-green-200/50 text-sm">Brak sesji.</p>
-              <p className="text-green-200/30 text-xs mt-1">Zakończ i zapisz pierwszą grę.</p>
+              {rankFilter ? (
+                <>
+                  <p className="text-green-200/50 text-sm">Brak sesji z „{rankFilter}".</p>
+                  <p className="text-green-200/30 text-xs mt-1">Zmień filtr lub wybierz „Wszyscy gracze".</p>
+                </>
+              ) : (
+                <>
+                  <p className="text-green-200/50 text-sm">Brak sesji.</p>
+                  <p className="text-green-200/30 text-xs mt-1">Zakończ i zapisz pierwszą grę.</p>
+                </>
+              )}
             </div>
           ) : (
             <>

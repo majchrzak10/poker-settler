@@ -237,6 +237,14 @@ export default function App() {
     if (tab === 'profile') markInvitesSeen();
   }, [tab]);
 
+  useEffect(() => {
+    if (tab === 'history') markSharedSeen();
+  }, [sharedHistory]);
+
+  useEffect(() => {
+    if (tab === 'profile') markInvitesSeen();
+  }, [pendingInvites]);
+
   const totalPot = sessionPlayers.reduce((sum, sp) => sum + getTotalBuyIn(sp), 0);
   const addFailedCloudSave = (payload: FailedCloudSave) => {
     setFailedCloudSaves(prev => {
