@@ -45,9 +45,10 @@ export function PendingEditsPanel({ userId, ownedHistory, onApplied }: PendingEd
     setProposals((data as Proposal[]) ?? []);
   };
 
+  const ownedIds = ownedHistory.map(s => s.id).join(',');
   useEffect(() => {
     void load();
-  }, [userId, ownedHistory.length]);
+  }, [userId, ownedIds]);
 
   const respond = async (proposalId: string, decision: 'accepted' | 'rejected') => {
     setBusy(proposalId);

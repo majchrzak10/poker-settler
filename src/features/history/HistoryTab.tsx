@@ -125,7 +125,7 @@ export function HistoryTab({
     : history;
   const filteredHistory = period === null ? statsSource : statsSource.slice(-period);
   const stats = calculateAllTimeStats(filteredHistory);
-  const sorted = [...history].reverse();
+  const sorted = [...statsSource].reverse();
   const drilldownSessions = sorted;
   const archiveSlice = drilldownSessions.slice(0, archiveLimit);
   const failedSessionIdSet = useMemo(() => new Set(failedSessionIds), [failedSessionIds]);
