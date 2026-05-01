@@ -59,6 +59,10 @@ Kolejność wg numerów plików. **Uwaga:** są **dwa pliki `005_*`** — przy r
 | 017 | `017_session_players_fk_set_null.sql` | FK przy usuwaniu gracza |
 | 018 | `018_idempotent_remove_friend_link.sql` | Idempotentne odpinanie znajomego |
 | 019 | `019_players_unique_phone_per_owner.sql` | Unikalny numer (9 cyfr) wśród `players` u tego samego `owner_id` |
+| 020 | `020_cross_account_sync.sql` | Synchronizacja cross-account: shared participations, trigger `auto_create_participation` |
+| 021 | `021_rpc_idempotent_participations.sql` | Idempotentne `save_session_atomic` / odporność na trigger z 020 |
+| 022 | `022_reliability_fixes.sql` | Trigger `session_players_auto_participation` zmieniony na `AFTER INSERT OR UPDATE` |
+| 023 | `023_session_edit_proposals.sql` | Tabela `session_edit_proposals` + RPC `propose_session_edit` + `respond_session_edit` |
 
 Skrypt **`scripts/diagnose.mjs`** (wymaga `SUPABASE_PAT` z dashboardu Supabase) — szybki przegląd tabel, publikacji Realtime, RLS, orfanów (bez logowania sekretów do repo).
 
@@ -72,6 +76,7 @@ Skrypt **`scripts/diagnose.mjs`** (wymaga `SUPABASE_PAT` z dashboardu Supabase) 
 - **`live_session_state`** — draft bieżącej gry (sync na żywo).
 - **`friend_invites`** — zaproszenia (invite-only flow).
 - **`client_logs`** — zdarzenia klienta (błędy sync itd.), RLS: user widzi tylko swoje.
+- **`session_edit_proposals`** — propozycje zmian kwot w sesji składane przez gości; host akceptuje/odrzuca (dodane migracją 023).
 
 **Założenie „user = player”:** każdy zarejestrowany użytkownik powinien mieć **self-playera** (`owner_id = linked_user_id = user.id`). Realizacja: trigger w **015** + logika w kliencie.
 
@@ -82,6 +87,7 @@ Skrypt **`scripts/diagnose.mjs`** (wymaga `SUPABASE_PAT` z dashboardu Supabase) 
 | Stan | Opis |
 |------|------|
 | **Zrobione (ok. Faza 1)** | Migracje 014–018, telemetria, twardniejszy auth/realtime w kliencie, dokumentacja, `diagnose.mjs`; wiele hotfixów w `index.html` (m.in. reconnect, naprawy FK, idempotent unlink). |
+| **Zrobione (2026-05)** | Migracje 020–023; pełny Vite+TS refactor; scoped localStorage per-user; badge'e na zakładkach Historia/Profil; eksport CSV; filtr rankingu per-znajomy; edycja sesji przez gościa z akceptacją hosta. Szczegóły: `docs/SESSION_STATE.md`. |
 | **Plan (Faza 2 — w toku)** | Szkielet Vite + TS jest; kolejny krok: rozbicie `App.tsx`, warstwa `sync/`, typy Supabase — `docs/PLAN.md` sekcja 4. |
 | **Dev / deploy** | Lokalnie: `npm run dev`; produkcja: `npm run build` → Netlify publikuje `dist/` (patrz `netlify.toml`). |
 
