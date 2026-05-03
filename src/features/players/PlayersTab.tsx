@@ -116,6 +116,131 @@ export function PlayersTab({
     cancelEdit();
   };
 
+  const renderPlayerCard = (p: Player) => {
+    const inSession = sessionPlayers.some(sp => sp.playerId === p.id);
+    const isEditing = editingId === p.id;
+    const isSelfPlayer = p.linked_user_id === currentUserId;
+    const displayName = isSelfPlayer ? ((accountProfile?.display_name || '').trim() || p.name) : p.name;
+    const displayPhoneRaw = isSelfPlayer ? (accountProfile?.phone ?? p.phone) : p.phone;
+    const displayPhone = displayPhoneRaw ? formatPhone(String(displayPhoneRaw)) : 'Brak numeru';
+    const displayEmail = isSelfPlayer ? (accountEmail || '') : ((p.email || '').trim().toLowerCase());
+    const emailNorm = (p.email || '').trim().toLowerCase();
+    const lookupEmail = isSelfPlayer ? (accountEmail || '').trim().toLowerCase() : emailNorm;
+    const hasAccount = lookupEmail ? accountByEmail[lookupEmail] : undefined;
+    const inviteMeta = emailNorm ? outgoingInviteMetaByEmail[emailNorm] : null;
+    const inviteStatus = inviteMeta?.status || null;
+    const statusKey = p.linked_user_id
+      ? 'accepted'
+      : inviteStatus === 'pending'
+        ? 'invited'
+        : inviteStatus === 'rejected'
+          ? 'rejected'
+          : inviteStatus === 'cancelled'
+            ? 'revoked'
+            : inviteStatus === 'accepted'
+              ? 'accepted'
+        : hasAccount === false
+          ? 'Brak konta'
+          : hasAccount === true
+            ? 'Konto aktywne'
+            : 'Niezweryfikowany';
+    const statusDotClass = statusKey === 'accepted' ? 'bg-emerald-400' : '';
+
+    return (
+      <div key={p.id} className="bg-black/30 rounded-2xl border border-green-900 px-4 py-3">
+        {isEditing ? (
+          <div className="space-y-2">
+            <input value={draft.name} onChange={(e: ChangeEvent<HTMLInputElement>) => setDraft(d => ({ ...d, name: e.target.value }))}
+              placeholder="Imię gracza" autoFocus
+              className="w-full bg-black/40 rounded-xl px-3 py-2.5 text-sm text-white placeholder-green-700 border border-green-800 focus:outline-none focus:border-rose-600 transition-colors" />
+            <div className="space-y-1">
+              <input value={draft.phone} onChange={(e: ChangeEvent<HTMLInputElement>) => setDraft(d => ({ ...d, phone: formatPhone(e.target.value) }))}
+                placeholder="Numer telefonu" type="tel" inputMode="numeric" maxLength={11}
+                className={`w-full bg-black/40 rounded-xl px-3 py-2.5 text-sm text-white placeholder-green-700 border transition-colors focus:outline-none ${draftPhoneError ? 'border-red-500' : 'border-green-800 focus:border-rose-600'}`} />
+              {draftPhoneError && !isSelfPlayer && <p className="text-xs text-red-400 px-1">Podaj pełny, 9-cyfrowy numer</p>}
+              {isSelfPlayer && draftPhoneDigits.length > 0 && draftPhoneDigits.length !== 9 && (
+                <p className="text-xs text-red-400 px-1">Podaj pełny numer (9 cyfr) lub zostaw puste.</p>
+              )}
+            </div>
+            <div className="space-y-1">
+              <input value={isSelfPlayer ? (accountEmail || '') : draft.email} onChange={(e: ChangeEvent<HTMLInputElement>) => !isSelfPlayer && setDraft(d => ({ ...d, email: e.target.value }))}
+                placeholder="Email znajomego" type="email" autoComplete="off" readOnly={isSelfPlayer}
+                className={`w-full bg-black/40 rounded-xl px-3 py-2.5 text-sm text-white placeholder-green-700 border transition-colors focus:outline-none ${!isSelfPlayer && draftEmailError ? 'border-red-500' : 'border-green-800 focus:border-rose-600'} ${isSelfPlayer ? 'opacity-80 cursor-not-allowed' : ''}`} />
+              {!isSelfPlayer && draftEmailError && <p className="text-xs text-red-400 px-1">Podaj poprawny email</p>}
+              {isSelfPlayer && <p className="text-[11px] text-green-200/40 px-1">Email konta jest ustawiany przy rejestracji (jak w Profilu).</p>}
+            </div>
+            <div className="flex gap-2 pt-0.5">
+              <button onClick={() => confirmEdit(p.id, isSelfPlayer)} disabled={isSelfPlayer ? !(draft.name.trim() && draftPhoneOkSelf) : !canSaveDraft}
+                className="flex-1 flex items-center justify-center gap-1.5 bg-rose-800 hover:bg-rose-900 disabled:opacity-40 disabled:cursor-not-allowed rounded-xl py-2 text-sm font-semibold transition-colors">
+                <IconCheck size={14} /> Zapisz
+              </button>
+              <button onClick={cancelEdit}
+                className="flex items-center justify-center gap-1 bg-black/40 hover:bg-black/60 border border-green-900 rounded-xl px-4 py-2 text-sm text-green-200/60 hover:text-white transition-colors">
+                <IconX size={14} /> Anuluj
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <div className="flex items-center gap-3">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <p className="font-semibold text-white text-base leading-tight">{displayName}</p>
+                  {statusDotClass && (
+                    <span
+                      className={`inline-block w-2 h-2 rounded-full ${statusDotClass}`}
+                      title={statusKey}
+                      aria-label={statusKey}
+                    />
+                  )}
+                </div>
+                <p className="text-xs text-green-300/60">{displayPhone}</p>
+                {displayEmail ? <p className="text-[11px] text-green-300/45 truncate">{displayEmail}</p> : null}
+                {isSelfPlayer && <p className="text-[10px] text-green-200/35">To Twoje konto — imię i numer jak w Profilu.</p>}
+              </div>
+              <button onClick={() => onAddToSession(p.id)} disabled={inSession}
+                className={`shrink-0 flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border transition-colors ${inSession ? 'bg-emerald-900/30 text-emerald-400 border-emerald-800 cursor-default' : 'bg-black/30 text-green-200 border-green-800 hover:bg-green-900/50'}`}>
+                {inSession ? <IconCheck /> : <IconPlus />}
+                {inSession ? 'W sesji' : 'Sesja'}
+              </button>
+              {p.linked_user_id && p.linked_user_id !== currentUserId && (
+                <button
+                  onClick={async () => { await onUnlinkPlayer(p.id); }}
+                  className="shrink-0 text-xs text-rose-300 border border-rose-900/60 hover:bg-rose-900/25 rounded-lg px-2.5 py-1.5 transition-colors"
+                  title="Odepnij konto"
+                >
+                  Odepnij
+                </button>
+              )}
+              <button onClick={() => enterEdit(p)} className="shrink-0 text-green-700 hover:text-green-300 transition-colors p-1">
+                <IconPencil />
+              </button>
+              <button
+                onClick={() => onRemovePlayer(p.id)}
+                disabled={isSelfPlayer}
+                title={isSelfPlayer ? 'Nie możesz usunąć własnego profilu gracza' : 'Usuń gracza'}
+                className={`shrink-0 transition-colors p-1 ${isSelfPlayer ? 'text-green-900/40 cursor-not-allowed' : 'text-green-900 hover:text-rose-400'}`}
+              >
+                <IconTrash />
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const friends = players
+    .filter(p => p.linked_user_id !== null)
+    .sort((a, b) => {
+      if (a.linked_user_id === currentUserId) return -1;
+      if (b.linked_user_id === currentUserId) return 1;
+      return (a.name || '').localeCompare(b.name || '');
+    });
+  const locals = players
+    .filter(p => p.linked_user_id === null)
+    .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
   return (
     <div className="p-4 space-y-5">
       <div>
@@ -149,126 +274,39 @@ export function PlayersTab({
         </button>
       </form>
 
-      <div className="space-y-2">
-        {players.length === 0 ? (
-          <div className="text-center py-12 bg-black/20 rounded-2xl border border-dashed border-green-900">
-            <p className="text-green-200/50 text-sm">Brak graczy.</p>
-            <p className="text-green-200/45 text-xs mt-1">Dodaj stałych bywalców powyżej.</p>
-          </div>
-        ) : players.map(p => {
-          const inSession = sessionPlayers.some(sp => sp.playerId === p.id);
-          const isEditing = editingId === p.id;
-          const isSelfPlayer = p.linked_user_id === currentUserId;
-          const displayName = isSelfPlayer ? ((accountProfile?.display_name || '').trim() || p.name) : p.name;
-          const displayPhoneRaw = isSelfPlayer ? (accountProfile?.phone ?? p.phone) : p.phone;
-          const displayPhone = displayPhoneRaw ? formatPhone(String(displayPhoneRaw)) : 'Brak numeru';
-          const displayEmail = isSelfPlayer ? (accountEmail || '') : ((p.email || '').trim().toLowerCase());
-          const emailNorm = (p.email || '').trim().toLowerCase();
-          const lookupEmail = isSelfPlayer ? (accountEmail || '').trim().toLowerCase() : emailNorm;
-          const hasAccount = lookupEmail ? accountByEmail[lookupEmail] : undefined;
-          const inviteMeta = emailNorm ? outgoingInviteMetaByEmail[emailNorm] : null;
-          const inviteStatus = inviteMeta?.status || null;
-          const statusKey = p.linked_user_id
-            ? 'accepted'
-            : inviteStatus === 'pending'
-              ? 'invited'
-              : inviteStatus === 'rejected'
-                ? 'rejected'
-                : inviteStatus === 'cancelled'
-                  ? 'revoked'
-                  : inviteStatus === 'accepted'
-                    ? 'accepted'
-              : hasAccount === false
-                ? 'Brak konta'
-                : hasAccount === true
-                  ? 'Konto aktywne'
-                  : 'Niezweryfikowany';
-          const statusDotClass = statusKey === 'accepted' ? 'bg-emerald-400' : '';
-
-          return (
-            <div key={p.id} className="bg-black/30 rounded-2xl border border-green-900 px-4 py-3">
-              {isEditing ? (
-                <div className="space-y-2">
-                  <input value={draft.name} onChange={(e: ChangeEvent<HTMLInputElement>) => setDraft(d => ({ ...d, name: e.target.value }))}
-                    placeholder="Imię gracza" autoFocus
-                    className="w-full bg-black/40 rounded-xl px-3 py-2.5 text-sm text-white placeholder-green-700 border border-green-800 focus:outline-none focus:border-rose-600 transition-colors" />
-                  <div className="space-y-1">
-                    <input value={draft.phone} onChange={(e: ChangeEvent<HTMLInputElement>) => setDraft(d => ({ ...d, phone: formatPhone(e.target.value) }))}
-                      placeholder="Numer telefonu" type="tel" inputMode="numeric" maxLength={11}
-                      className={`w-full bg-black/40 rounded-xl px-3 py-2.5 text-sm text-white placeholder-green-700 border transition-colors focus:outline-none ${draftPhoneError ? 'border-red-500' : 'border-green-800 focus:border-rose-600'}`} />
-                    {draftPhoneError && !isSelfPlayer && <p className="text-xs text-red-400 px-1">Podaj pełny, 9-cyfrowy numer</p>}
-                    {isSelfPlayer && draftPhoneDigits.length > 0 && draftPhoneDigits.length !== 9 && (
-                      <p className="text-xs text-red-400 px-1">Podaj pełny numer (9 cyfr) lub zostaw puste.</p>
-                    )}
-                  </div>
-                  <div className="space-y-1">
-                    <input value={isSelfPlayer ? (accountEmail || '') : draft.email} onChange={(e: ChangeEvent<HTMLInputElement>) => !isSelfPlayer && setDraft(d => ({ ...d, email: e.target.value }))}
-                      placeholder="Email znajomego" type="email" autoComplete="off" readOnly={isSelfPlayer}
-                      className={`w-full bg-black/40 rounded-xl px-3 py-2.5 text-sm text-white placeholder-green-700 border transition-colors focus:outline-none ${!isSelfPlayer && draftEmailError ? 'border-red-500' : 'border-green-800 focus:border-rose-600'} ${isSelfPlayer ? 'opacity-80 cursor-not-allowed' : ''}`} />
-                    {!isSelfPlayer && draftEmailError && <p className="text-xs text-red-400 px-1">Podaj poprawny email</p>}
-                    {isSelfPlayer && <p className="text-[11px] text-green-200/40 px-1">Email konta jest ustawiany przy rejestracji (jak w Profilu).</p>}
-                  </div>
-                  <div className="flex gap-2 pt-0.5">
-                    <button onClick={() => confirmEdit(p.id, isSelfPlayer)} disabled={isSelfPlayer ? !(draft.name.trim() && draftPhoneOkSelf) : !canSaveDraft}
-                      className="flex-1 flex items-center justify-center gap-1.5 bg-rose-800 hover:bg-rose-900 disabled:opacity-40 disabled:cursor-not-allowed rounded-xl py-2 text-sm font-semibold transition-colors">
-                      <IconCheck size={14} /> Zapisz
-                    </button>
-                    <button onClick={cancelEdit}
-                      className="flex items-center justify-center gap-1 bg-black/40 hover:bg-black/60 border border-green-900 rounded-xl px-4 py-2 text-sm text-green-200/60 hover:text-white transition-colors">
-                      <IconX size={14} /> Anuluj
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  <div className="flex items-center gap-3">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <p className="font-semibold text-white text-base leading-tight">{displayName}</p>
-                        {statusDotClass && (
-                          <span
-                            className={`inline-block w-2 h-2 rounded-full ${statusDotClass}`}
-                            title={statusKey}
-                            aria-label={statusKey}
-                          />
-                        )}
-                      </div>
-                      <p className="text-xs text-green-300/60">{displayPhone}</p>
-                      {displayEmail ? <p className="text-[11px] text-green-300/45 truncate">{displayEmail}</p> : null}
-                      {isSelfPlayer && <p className="text-[10px] text-green-200/35">To Twoje konto — imię i numer jak w Profilu.</p>}
-                    </div>
-                    <button onClick={() => onAddToSession(p.id)} disabled={inSession}
-                      className={`shrink-0 flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border transition-colors ${inSession ? 'bg-emerald-900/30 text-emerald-400 border-emerald-800 cursor-default' : 'bg-black/30 text-green-200 border-green-800 hover:bg-green-900/50'}`}>
-                      {inSession ? <IconCheck /> : <IconPlus />}
-                      {inSession ? 'W sesji' : 'Sesja'}
-                    </button>
-                    {p.linked_user_id && p.linked_user_id !== currentUserId && (
-                      <button
-                        onClick={async () => { await onUnlinkPlayer(p.id); }}
-                        className="shrink-0 text-xs text-rose-300 border border-rose-900/60 hover:bg-rose-900/25 rounded-lg px-2.5 py-1.5 transition-colors"
-                        title="Odepnij konto"
-                      >
-                        Odepnij
-                      </button>
-                    )}
-                    <button onClick={() => enterEdit(p)} className="shrink-0 text-green-700 hover:text-green-300 transition-colors p-1">
-                      <IconPencil />
-                    </button>
-                    <button
-                      onClick={() => onRemovePlayer(p.id)}
-                      disabled={isSelfPlayer}
-                      title={isSelfPlayer ? 'Nie możesz usunąć własnego profilu gracza' : 'Usuń gracza'}
-                      className={`shrink-0 transition-colors p-1 ${isSelfPlayer ? 'text-green-900/40 cursor-not-allowed' : 'text-green-900 hover:text-rose-400'}`}
-                    >
-                      <IconTrash />
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
+      {players.length === 0 ? (
+        <div className="text-center py-12 bg-black/20 rounded-2xl border border-dashed border-green-900">
+          <p className="text-green-200/50 text-sm">Brak graczy.</p>
+          <p className="text-green-200/45 text-xs mt-1">Dodaj stałych bywalców powyżej.</p>
+        </div>
+      ) : (
+        <>
+          {friends.length > 0 && (
+            <section className="space-y-2">
+              <div className="flex items-baseline justify-between px-1">
+                <h3 className="text-xs font-medium text-emerald-300/85 uppercase tracking-wider flex items-center gap-1.5">
+                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                  Znajomi
+                </h3>
+                <span className="text-[10px] text-green-200/40 tabular-nums">{friends.length}</span>
+              </div>
+              {friends.map(renderPlayerCard)}
+            </section>
+          )}
+          {locals.length > 0 && (
+            <section className="space-y-2">
+              <div className="flex items-baseline justify-between px-1">
+                <h3 className="text-xs font-medium text-green-300/70 uppercase tracking-wider flex items-center gap-1.5">
+                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-green-700" />
+                  Lokalni gracze
+                </h3>
+                <span className="text-[10px] text-green-200/40 tabular-nums">{locals.length}</span>
+              </div>
+              {locals.map(renderPlayerCard)}
+            </section>
+          )}
+        </>
+      )}
     </div>
   );
 }
