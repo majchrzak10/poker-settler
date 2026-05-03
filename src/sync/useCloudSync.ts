@@ -207,7 +207,7 @@ export function useCloudSync({
     type SessionRow = NonNullable<typeof sData>[number];
     const mapSessionRow = (s: SessionRow): CloudSession => ({
       id: s.id,
-      date: s.played_at,
+      date: s.played_at ?? '',
       totalPot: s.total_pot / 100,
       players: ((s as { session_players?: unknown[] }).session_players || []).map(
         (sp: unknown) => {
@@ -280,7 +280,37 @@ export function useCloudSync({
           (inv.invitee_user_id === user.id ||
             (inv.invitee_email || '').trim().toLowerCase() === myEmail)
       );
-      setPendingInvites(incoming);
+
+      const requesterUserIds = Array.from(
+        new Set(incoming.map(i => i.requester_user_id).filter(Boolean))
+      ) as string[];
+      const requesterProfiles: Record<string, { name: string; email: string }> = {};
+      if (requesterUserIds.length > 0) {
+        const { data: requesterRows } = await supabase
+          .from('profiles')
+          .select('id, display_name, email')
+          .in('id', requesterUserIds);
+        for (const row of requesterRows || []) {
+          const emailNorm = ((row.email as string) || '').trim().toLowerCase();
+          const name =
+            ((row.display_name as string) || '').trim() ||
+            emailNorm.split('@')[0] ||
+            'Gracz';
+          requesterProfiles[row.id as string] = { name, email: emailNorm };
+        }
+      }
+
+      const enrichedIncoming = incoming.map(inv => ({
+        id: inv.id,
+        invitee_email: inv.invitee_email,
+        created_at: inv.created_at,
+        requester_user_id: inv.requester_user_id,
+        requester_player_id: inv.requester_player_id,
+        requester_name: requesterProfiles[inv.requester_user_id]?.name || 'Gracz',
+        requester_email: requesterProfiles[inv.requester_user_id]?.email || '',
+      }));
+      setPendingInvites(enrichedIncoming);
+
       const outgoing = (invitesData || []).filter(
         inv => inv.requester_user_id === user.id && inv.status !== 'accepted'
       );

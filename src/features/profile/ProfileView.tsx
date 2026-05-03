@@ -13,12 +13,6 @@ interface Player {
   name: string;
 }
 
-interface PendingInvite {
-  id: string;
-  invitee_email: string;
-  created_at: string;
-}
-
 interface OutgoingInvite {
   id: string;
   invitee_email: string;
@@ -41,10 +35,7 @@ interface ProfileViewProps {
   reloadAccountProfile: () => Promise<void>;
   history: unknown[];
   players: Player[];
-  pendingInvites: PendingInvite[];
   outgoingInvites: OutgoingInvite[];
-  onAcceptInvite: (id: string) => Promise<string | null>;
-  onRejectInvite: (id: string) => Promise<string | null>;
   onCancelInvite: (id: string) => Promise<string | null>;
   onUnlinkPlayer: (id: string) => Promise<void>;
   onSignOut: () => void;
@@ -74,10 +65,7 @@ export function ProfileView({
   accountProfile,
   reloadAccountProfile,
   players,
-  pendingInvites,
   outgoingInvites,
-  onAcceptInvite,
-  onRejectInvite,
   onCancelInvite,
   onUnlinkPlayer: _onUnlinkPlayer,
   onSignOut,
@@ -179,7 +167,6 @@ export function ProfileView({
   };
 
   const displayName = mergedDisplayName;
-  const pendingCount = (pendingInvites || []).length;
   const outgoingCount = (outgoingInvites || []).length;
 
   return (
@@ -300,57 +287,14 @@ export function ProfileView({
       )}
       <p className="text-[11px] text-green-200/35 px-1">Konto i historia sesji są przechowywane w chmurze po zalogowaniu.</p>
 
-      {(pendingCount > 0 || outgoingCount > 0) && (
+      {outgoingCount > 0 && (
         <div className="rounded-xl border border-green-900/55 bg-black/25 px-3 py-2 space-y-2">
           <div className="flex items-center justify-between gap-2">
-            <h3 className="text-xs font-medium text-white/90">Zaproszenia</h3>
-            <span className="text-[10px] text-green-200/40 tabular-nums">
-              {pendingCount ? `${pendingCount} przych.` : ''}{pendingCount && outgoingCount ? ' · ' : ''}{outgoingCount ? `${outgoingCount} wysł.` : ''}
-            </span>
+            <h3 className="text-xs font-medium text-white/90">Wysłane zaproszenia</h3>
+            <span className="text-[10px] text-green-200/40 tabular-nums">{outgoingCount}</span>
           </div>
-          {pendingCount > 0 && (
-            <ul className="space-y-1">
-              {(pendingInvites || []).map(invite => (
-                <li key={invite.id} className="flex items-center gap-2 min-h-[28px]">
-                  <span className="flex-1 min-w-0 text-[11px] text-green-100/85 truncate" title={`${invite.invitee_email} · ${formatDate(invite.created_at)}`}>
-                    {invite.invitee_email}
-                  </span>
-                  <div className="flex items-center gap-1 shrink-0">
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        setInviteBusyId(invite.id);
-                        setInviteMsg('');
-                        const err = await onAcceptInvite(invite.id);
-                        setInviteBusyId(null);
-                        setInviteMsg(err ? err : 'Zaakceptowano.');
-                      }}
-                      disabled={inviteBusyId === invite.id}
-                      className="text-[10px] leading-none px-2 py-1 rounded-md bg-emerald-900/70 hover:bg-emerald-800 text-emerald-100 disabled:opacity-40"
-                    >
-                      OK
-                    </button>
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        setInviteBusyId(invite.id);
-                        setInviteMsg('');
-                        const err = await onRejectInvite(invite.id);
-                        setInviteBusyId(null);
-                        setInviteMsg(err ? err : 'Odrzucono.');
-                      }}
-                      disabled={inviteBusyId === invite.id}
-                      className="text-[10px] leading-none px-2 py-1 rounded-md border border-rose-900/60 text-rose-300/90 hover:bg-rose-950/40 disabled:opacity-40"
-                    >
-                      ×
-                    </button>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
           {outgoingCount > 0 && (
-            <ul className={`space-y-1 ${pendingCount > 0 ? 'pt-1 border-t border-green-900/35' : ''}`}>
+            <ul className="space-y-1">
               {(outgoingInvites || []).map(invite => (
                 <li key={invite.id} className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px]">
                   <span className="flex-1 min-w-0 text-green-200/75 truncate" title={invite.invitee_email}>{invite.invitee_email}</span>

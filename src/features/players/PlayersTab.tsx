@@ -2,6 +2,8 @@ import { useState } from 'react';
 import type { ChangeEvent, FormEvent } from 'react';
 import { formatPhone } from '../../lib/format';
 import { IconUserPlus, IconCheck, IconX, IconPlus, IconPencil, IconTrash } from '../../ui/icons';
+import { IncomingInvitesCard } from './IncomingInvitesCard';
+import type { IncomingInvite } from './IncomingInvitesCard';
 
 interface Player {
   id: string;
@@ -40,6 +42,9 @@ interface PlayersTabProps {
   outgoingInviteMetaByEmail: Record<string, InviteMeta | null>;
   accountProfile: AccountProfile | null;
   accountEmail: string | null | undefined;
+  pendingInvites: IncomingInvite[];
+  onAcceptInvite: (id: string) => Promise<string | null>;
+  onRejectInvite: (id: string) => Promise<string | null>;
 }
 
 export function PlayersTab({
@@ -55,6 +60,9 @@ export function PlayersTab({
   outgoingInviteMetaByEmail,
   accountProfile,
   accountEmail,
+  pendingInvites,
+  onAcceptInvite,
+  onRejectInvite,
 }: PlayersTabProps) {
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
@@ -114,6 +122,12 @@ export function PlayersTab({
         <h2 className="text-lg font-bold text-white tracking-tight">Gracze</h2>
         <p className="text-xs text-green-200/55 mt-0.5">{players.length} zapisanych · baza na kolejne sesje</p>
       </div>
+
+      <IncomingInvitesCard
+        invites={pendingInvites}
+        onAccept={onAcceptInvite}
+        onReject={onRejectInvite}
+      />
 
       <form onSubmit={handleSubmit} className="bg-black/30 rounded-2xl p-4 border border-green-900 space-y-3">
         <input value={name} onChange={(e: ChangeEvent<HTMLInputElement>) => setName(e.target.value)} placeholder="Imię gracza *"
