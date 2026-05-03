@@ -53,6 +53,7 @@ export function HistoryTab({
   retryingFailedSaves,
 }: HistoryTabProps) {
   const [period, setPeriod] = useState<number | null>(null);
+  const [playerFilter, setPlayerFilter] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [editingIds, setEditingIds] = useState<Record<string, boolean>>({});
   const [sessionDrafts, setSessionDrafts] = useState<Record<string, SessionPlayer[]>>({});
@@ -62,10 +63,28 @@ export function HistoryTab({
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [archiveLimit, setArchiveLimit] = useState(25);
 
-  const statsSource = history;
+  const allPlayerNames = useMemo(() => {
+    const set = new Set<string>();
+    for (const session of history) {
+      for (const p of session.players ?? []) {
+        const name = (p.name || '').trim();
+        if (name) set.add(name);
+      }
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [history]);
+
+  const playerFilteredHistory = useMemo(() => {
+    if (!playerFilter) return history;
+    return history.filter(session =>
+      (session.players ?? []).some(p => (p.name || '').trim() === playerFilter)
+    );
+  }, [history, playerFilter]);
+
+  const statsSource = playerFilteredHistory;
   const filteredHistory = period === null ? statsSource : statsSource.slice(-period);
   const stats = calculateAllTimeStats(filteredHistory);
-  const sorted = [...history].reverse();
+  const sorted = [...playerFilteredHistory].reverse();
   const drilldownSessions = sorted;
   const archiveSlice = drilldownSessions.slice(0, archiveLimit);
   const failedSessionIdSet = useMemo(() => new Set(failedSessionIds), [failedSessionIds]);
@@ -149,8 +168,33 @@ export function HistoryTab({
           );
         })}
       </div>
+      {allPlayerNames.length > 0 && (
+        <div className="flex items-center gap-2">
+          <select
+            value={playerFilter ?? ''}
+            onChange={(e: ChangeEvent<HTMLSelectElement>) => { setPlayerFilter(e.target.value || null); setArchiveLimit(25); }}
+            className="flex-1 bg-black/30 border border-green-800 rounded-lg px-3 py-2 text-xs text-green-200/85 focus:outline-none focus:border-rose-600 transition-colors"
+          >
+            <option value="">Wszyscy gracze</option>
+            {allPlayerNames.map(name => (
+              <option key={name} value={name}>{name}</option>
+            ))}
+          </select>
+          {playerFilter && (
+            <button
+              type="button"
+              onClick={() => { setPlayerFilter(null); setArchiveLimit(25); }}
+              title="Wyczyść filtr"
+              className="text-xs text-rose-300/80 hover:text-rose-200 px-2 py-2 transition-colors"
+            >
+              ✕
+            </button>
+          )}
+        </div>
+      )}
       <p className="text-xs text-green-200/60 uppercase tracking-wider px-1">
         {period === null ? 'All time' : `Ostatnie ${Math.min(period, statsSource.length)} ${pluralPL(Math.min(period, statsSource.length), 'gra', 'gry', 'gier')}`}
+        {playerFilter && <span className="text-emerald-300/85 normal-case tracking-normal"> · z {playerFilter}</span>}
       </p>
 
       <div className="space-y-2">
