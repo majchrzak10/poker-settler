@@ -64,6 +64,7 @@ export function ProfileView({
   user,
   accountProfile,
   reloadAccountProfile,
+  history,
   players,
   outgoingInvites,
   onCancelInvite,
@@ -168,6 +169,85 @@ export function ProfileView({
 
   const displayName = mergedDisplayName;
   const outgoingCount = (outgoingInvites || []).length;
+
+  const pokerStats = useMemo(() => {
+    if (!history || history.length === 0) return null;
+    const selfPlayerId = selfPlayer ? (selfPlayer as { id?: string }).id : null;
+    const selfNameNorm = (mergedDisplayName || '').trim().toLowerCase();
+
+    type StatsSession = {
+      date: string;
+      players: { id: string; name: string; netBalance: number }[];
+    };
+    const sessions = history as StatsSession[];
+
+    let count = 0;
+    let total = 0;
+    let wins = 0;
+    let bestNet = -Infinity;
+    let bestDate = '';
+    let worstNet = Infinity;
+    let worstDate = '';
+    const rivalCount: Record<string, number> = {};
+
+    for (const session of sessions) {
+      if (!session?.players) continue;
+      const me = session.players.find(p => {
+        if (selfPlayerId && p.id === selfPlayerId) return true;
+        if (selfNameNorm && (p.name || '').trim().toLowerCase() === selfNameNorm) return true;
+        return false;
+      });
+      if (!me) continue;
+      const net = Number(me.netBalance) || 0;
+      count++;
+      total += net;
+      if (net > 0) wins++;
+      if (net > bestNet) { bestNet = net; bestDate = session.date; }
+      if (net < worstNet) { worstNet = net; worstDate = session.date; }
+
+      for (const p of session.players) {
+        if (p === me) continue;
+        const key = (p.name || '').trim();
+        if (!key) continue;
+        rivalCount[key] = (rivalCount[key] || 0) + 1;
+      }
+    }
+
+    if (count === 0) return null;
+
+    let topRivalName = '';
+    let topRivalCount = 0;
+    for (const [name, c] of Object.entries(rivalCount)) {
+      if (c > topRivalCount) { topRivalName = name; topRivalCount = c; }
+    }
+
+    return {
+      count,
+      total,
+      winRate: Math.round((wins / count) * 100),
+      bestNet,
+      bestDate,
+      worstNet,
+      worstDate,
+      avg: total / count,
+      topRivalName,
+      topRivalCount,
+    };
+  }, [history, selfPlayer, mergedDisplayName]);
+
+  const formatPLN = (n: number) => {
+    const sign = n > 0 ? '+' : n < 0 ? '−' : '';
+    const abs = Math.abs(n);
+    return `${sign}${Math.round(abs)} PLN`;
+  };
+  const formatShortDate = (iso: string) => {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    const dd = String(d.getDate()).padStart(2, '0');
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    return `${dd}.${mm}`;
+  };
 
   return (
     <div className="p-4 space-y-5 pb-6">
@@ -286,6 +366,86 @@ export function ProfileView({
         </div>
       )}
       <p className="text-[11px] text-green-200/35 px-1">Konto i historia sesji są przechowywane w chmurze po zalogowaniu.</p>
+
+      {pokerStats && (
+        <div className="bg-black/30 border border-green-900 rounded-2xl p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <span className="text-base">📊</span>
+            <h3 className="text-sm font-semibold text-white">Twój profil pokerowy</h3>
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            <div className="bg-black/40 rounded-xl border border-green-900/60 p-3 text-center">
+              <p className="text-xl font-bold text-white tabular-nums leading-none">{pokerStats.count}</p>
+              <p className="text-[10px] text-green-200/55 mt-1.5">{pluralPL(pokerStats.count, 'sesja', 'sesje', 'sesji')}</p>
+            </div>
+            <div className="bg-black/40 rounded-xl border border-green-900/60 p-3 text-center">
+              <p
+                className={`text-xl font-bold tabular-nums leading-none ${
+                  pokerStats.total > 0 ? 'text-emerald-400' : pokerStats.total < 0 ? 'text-rose-400' : 'text-white'
+                }`}
+              >
+                {formatPLN(pokerStats.total)}
+              </p>
+              <p className="text-[10px] text-green-200/55 mt-1.5">bilans</p>
+            </div>
+            <div className="bg-black/40 rounded-xl border border-green-900/60 p-3 text-center">
+              <p className="text-xl font-bold text-white tabular-nums leading-none">{pokerStats.winRate}%</p>
+              <p className="text-[10px] text-green-200/55 mt-1.5">wygranych</p>
+            </div>
+          </div>
+          <div className="space-y-1.5 text-xs pt-1">
+            {pokerStats.bestNet > 0 && (
+              <div className="flex items-center justify-between gap-2 text-green-100/80">
+                <span className="flex items-center gap-1.5">
+                  <span>🏆</span>
+                  <span>Najlepsza sesja</span>
+                </span>
+                <span className="tabular-nums text-emerald-300">
+                  {formatPLN(pokerStats.bestNet)}
+                  {pokerStats.bestDate && <span className="text-green-200/40 ml-1.5">({formatShortDate(pokerStats.bestDate)})</span>}
+                </span>
+              </div>
+            )}
+            {pokerStats.worstNet < 0 && (
+              <div className="flex items-center justify-between gap-2 text-green-100/80">
+                <span className="flex items-center gap-1.5">
+                  <span>💀</span>
+                  <span>Najgorsza sesja</span>
+                </span>
+                <span className="tabular-nums text-rose-300">
+                  {formatPLN(pokerStats.worstNet)}
+                  {pokerStats.worstDate && <span className="text-green-200/40 ml-1.5">({formatShortDate(pokerStats.worstDate)})</span>}
+                </span>
+              </div>
+            )}
+            <div className="flex items-center justify-between gap-2 text-green-100/80">
+              <span className="flex items-center gap-1.5">
+                <span>📈</span>
+                <span>Średnio na sesję</span>
+              </span>
+              <span
+                className={`tabular-nums ${
+                  pokerStats.avg > 0 ? 'text-emerald-300' : pokerStats.avg < 0 ? 'text-rose-300' : 'text-green-200/70'
+                }`}
+              >
+                {formatPLN(pokerStats.avg)}
+              </span>
+            </div>
+            {pokerStats.topRivalName && pokerStats.topRivalCount > 1 && (
+              <div className="flex items-center justify-between gap-2 text-green-100/80">
+                <span className="flex items-center gap-1.5">
+                  <span>👥</span>
+                  <span>Częsty rywal</span>
+                </span>
+                <span className="text-green-200/85">
+                  {pokerStats.topRivalName}
+                  <span className="text-green-200/40 ml-1.5">({pokerStats.topRivalCount}×)</span>
+                </span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {outgoingCount > 0 && (
         <div className="rounded-xl border border-green-900/55 bg-black/25 px-3 py-2 space-y-2">
