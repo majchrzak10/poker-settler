@@ -168,6 +168,10 @@ export default function App() {
     lastSyncedProfileNameRef.current = null;
   }, [user?.id]);
 
+  // syncSelfPlayerName is defined further down (it depends on players+user+
+  // setters that haven't been declared yet). Use a ref so this effect can
+  // call it without TDZ issues and without listing the function in deps.
+  const syncSelfPlayerNameRef = useRef<((name: string) => void | Promise<void>) | null>(null);
   useEffect(() => {
     if (!user?.id || !accountProfile?.display_name) return;
     const profileName = accountProfile.display_name.trim();
@@ -177,7 +181,7 @@ export default function App() {
     if (!self) return;
     if (self.name === profileName) { lastSyncedProfileNameRef.current = profileName; return; }
     lastSyncedProfileNameRef.current = profileName;
-    void syncSelfPlayerName(profileName);
+    void syncSelfPlayerNameRef.current?.(profileName);
   }, [user?.id, accountProfile?.display_name, players]);
 
   useEffect(() => {
@@ -185,11 +189,10 @@ export default function App() {
     const playerIds = new Set(players.map(p => p.id));
     if (sessionPlayers.every(sp => playerIds.has(sp.playerId))) return;
     setSessionPlayers(prev => prev.filter(sp => playerIds.has(sp.playerId)));
-  }, [user?.id, players]);
+  }, [user?.id, players, sessionPlayers]);
 
   const { refreshCloudData } = useCloudSync({
     user,
-    players,
     skipLiveSessionCloud,
     setSkipLiveSessionCloud,
     syncChannelNonce,
@@ -233,7 +236,7 @@ export default function App() {
     const selfPlayer = players.find(p => p.linked_user_id === user.id);
     if (!selfPlayer) return;
     setSessionPlayers([{ playerId: selfPlayer.id, buyIns: [defaultBuyIn], cashOut: '0' }]);
-  }, [user?.id, players, sessionPlayers.length, defaultBuyIn, autoAddMeToSession]);
+  }, [user, players, sessionPlayers.length, defaultBuyIn, autoAddMeToSession]);
   const combinedHistory = useMemo(() => {
     const ownedIds = new Set(history.map(s => s.id));
     const dedupedShared = sharedHistory.filter(s => !ownedIds.has(String(s.sourceSessionId)));
@@ -305,7 +308,12 @@ export default function App() {
       retryFailedSaves();
     }, 1200);
     return () => clearTimeout(timer);
-  }, [user?.id, failedCloudSaves.length]);
+    // retryFailedSaves and retryingFailedSaves intentionally omitted: listing
+    // retryFailedSaves would re-arm the timer on every render (function
+    // identity changes), and the in-body retryingFailedSaves guard already
+    // covers the "in flight" case.
+
+  }, [user?.id, failedCloudSaves.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const failedSessionIds = useMemo(
     () => failedCloudSaves.map(x => x.sessionId),
@@ -776,6 +784,9 @@ export default function App() {
     if (profErr) await supabase.from('profiles').upsert({ id: user.id, display_name: nextName.trim(), email: myEmail });
     await reloadAccountProfile();
   };
+  useEffect(() => {
+    syncSelfPlayerNameRef.current = syncSelfPlayerName;
+  });
 
   if (authLoading) return <LoadingScreen />;
   if (emailConfirmed) return <EmailConfirmedScreen onContinue={() => setEmailConfirmed(false)} />;

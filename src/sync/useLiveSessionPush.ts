@@ -78,5 +78,8 @@ export function useLiveSessionPush({
       }
     }, 350);
     return () => clearTimeout(timer);
-  }, [user?.id, defaultBuyIn, sessionPlayers, skipLiveSessionCloud]);
+    // Refs and stable setters intentionally omitted — rerunning this debounced
+    // push on every render would defeat the 350 ms throttle.
+
+  }, [user?.id, defaultBuyIn, sessionPlayers, skipLiveSessionCloud]); // eslint-disable-line react-hooks/exhaustive-deps
 }

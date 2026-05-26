@@ -9,6 +9,7 @@ type Profile = Database['public']['Tables']['profiles']['Row'];
 export function useAccountProfile(user: User | null) {
   const [profile, setProfile] = useState<Profile | null>(null);
 
+  // eslint-disable-next-line react-hooks/preserve-manual-memoization
   const reload = useCallback(async () => {
     if (!user?.id) {
       setProfile(null);

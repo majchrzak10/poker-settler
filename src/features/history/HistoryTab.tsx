@@ -130,12 +130,22 @@ export function HistoryTab({
       ? transfers.map(t => `• ${t.from} ➜ ${t.to}: *${formatPln(t.amount)} PLN*${t.toPhone ? `  📱 ${t.toPhone}` : ''}`)
       : ['✅ Brak przelewów — wszyscy wyszli na zero!'];
     const text = [`♠️ *Poker Night — ${date}*`, `💰 *Pula: ${formatPln(session.totalPot)} PLN*`, '', '📊 *Wyniki:*', ...playerLines, '', '💸 *Przelewy:*', ...transferLines].join('\n');
-    if (navigator.share) { try { await navigator.share({ text }); return; } catch {} }
+    if (navigator.share) {
+      try {
+        await navigator.share({ text });
+        return;
+      } catch (err) {
+        // user cancelled share / share unavailable — fall through to clipboard
+        console.warn('[poker] navigator.share failed', err);
+      }
+    }
     try {
       await navigator.clipboard.writeText(text);
       setCopiedIds(prev => ({ ...prev, [session.id]: true }));
       setTimeout(() => setCopiedIds(prev => { const n = { ...prev }; delete n[session.id]; return n; }), 2500);
-    } catch {}
+    } catch (err) {
+      console.warn('[poker] clipboard write failed', err);
+    }
   };
 
   return (

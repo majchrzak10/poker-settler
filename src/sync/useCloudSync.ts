@@ -35,7 +35,6 @@ export interface CloudPlayer {
 
 interface UseCloudSyncProps {
   user: User | null;
-  players: CloudPlayer[];
   skipLiveSessionCloud: boolean;
   setSkipLiveSessionCloud: Dispatch<SetStateAction<boolean>>;
   syncChannelNonce: number;
@@ -67,7 +66,6 @@ interface UseCloudSyncProps {
  */
 export function useCloudSync({
   user,
-  players,
   skipLiveSessionCloud,
   setSkipLiveSessionCloud,
   syncChannelNonce,
@@ -94,7 +92,9 @@ export function useCloudSync({
   useEffect(() => {
     lastMergedLiveUpdatedAtRef.current = null;
     setSkipLiveSessionCloud(false);
-  }, [user?.id]);
+    // Refs and stable setters intentionally omitted.
+
+  }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const refreshCloudData = useCallback(async () => {
     if (!user) return;
@@ -369,7 +369,12 @@ export function useCloudSync({
         }
       }
     }
-  }, [user?.id, skipLiveSessionCloud]);
+    // refreshCloudData captures many setters/refs from props. Listing them
+    // would recreate the callback on every parent render → re-arm the
+    // Realtime channel and the polling timer. They're stable in practice
+    // (useState setters + refs), so we narrow deps deliberately.
+
+  }, [user?.id, skipLiveSessionCloud]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!user || !skipLiveSessionCloud) return;
@@ -388,7 +393,10 @@ export function useCloudSync({
       clearTimeout(soon);
       clearInterval(id);
     };
-  }, [user?.id, skipLiveSessionCloud]);
+    // Refs / stable setters intentionally omitted (would cause re-arming
+    // the polling loop on every render).
+
+  }, [user?.id, skipLiveSessionCloud]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     refreshCloudData();
@@ -421,7 +429,11 @@ export function useCloudSync({
       void refreshCloudData();
     };
     void ensureSelfPlayer();
-  }, [user?.id]);
+    // refreshCloudData/notifyCloudFailure intentionally omitted — we only
+    // want to run ensureSelfPlayer once per user identity change, not every
+    // time these (stable in practice) function references change.
+
+  }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!user) return;
@@ -537,7 +549,9 @@ export function useCloudSync({
       document.removeEventListener('visibilitychange', onVisibility);
       supabase.removeChannel(channel);
     };
-  }, [user?.id, refreshCloudData, skipLiveSessionCloud, syncChannelNonce]);
+    // setSyncChannelNonce intentionally omitted (stable setter from useState).
+
+  }, [user?.id, refreshCloudData, skipLiveSessionCloud, syncChannelNonce]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return { refreshCloudData };
 }

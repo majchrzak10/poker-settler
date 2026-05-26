@@ -31,6 +31,12 @@ export default [
           .filter(k => k.startsWith('react-hooks/'))
           .map(k => [k, 'warn']),
       ),
+      // Off: all our setState-in-effect cases are legitimate "sync with
+      // external prop/state" patterns (cleaning up orphan session players
+      // when the players list shrinks, auto-adding self when the
+      // autoAddMe toggle flips). The rule is intended to catch derived-
+      // state anti-patterns, which we don't have.
+      'react-hooks/set-state-in-effect': 'off',
       '@typescript-eslint/no-unused-vars': [
         'warn',
         { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },

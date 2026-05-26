@@ -9,12 +9,12 @@ interface AppError extends Error {
   code: string;
 }
 
+// Dynamiczna nazwa tabeli — Supabase-js zna tylko statyczne nazwy, rzutujemy.
+type AnySupabase = { from: (t: string) => { insert: (rows: Row[]) => Promise<{ error: { code?: string } | null }> } };
 async function insertRows(table: string, rows: Row[]) {
   if (!rows || rows.length === 0) return;
-  // Dynamiczna nazwa tabeli — Supabase-js zna tylko statyczne nazwy, rzutujemy.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { error } = await (supabase as any).from(table).insert(rows);
-  if (error && (error as { code?: string }).code !== '23505') throw error;
+  const { error } = await (supabase as unknown as AnySupabase).from(table).insert(rows);
+  if (error && error.code !== '23505') throw error;
 }
 
 function createMissingSessionPlayersError(message?: string): AppError {
