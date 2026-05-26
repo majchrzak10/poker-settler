@@ -212,14 +212,19 @@ export function PlayersTab({
                   Odepnij
                 </button>
               )}
-              <button onClick={() => enterEdit(p)} className="shrink-0 text-green-700 hover:text-green-300 transition-colors p-1">
+              <button
+                onClick={() => enterEdit(p)}
+                aria-label={`Edytuj gracza ${p.name}`}
+                className="shrink-0 text-green-700 hover:text-green-300 transition-colors p-2.5 min-w-[44px] min-h-[44px] flex items-center justify-center"
+              >
                 <IconPencil />
               </button>
               <button
                 onClick={() => onRemovePlayer(p.id)}
                 disabled={isSelfPlayer}
+                aria-label={isSelfPlayer ? `Nie możesz usunąć własnego profilu` : `Usuń gracza ${p.name}`}
                 title={isSelfPlayer ? 'Nie możesz usunąć własnego profilu gracza' : 'Usuń gracza'}
-                className={`shrink-0 transition-colors p-1 ${isSelfPlayer ? 'text-green-900/40 cursor-not-allowed' : 'text-green-900 hover:text-rose-400'}`}
+                className={`shrink-0 transition-colors p-2.5 min-w-[44px] min-h-[44px] flex items-center justify-center ${isSelfPlayer ? 'text-green-900/40 cursor-not-allowed' : 'text-green-900 hover:text-rose-400'}`}
               >
                 <IconTrash />
               </button>

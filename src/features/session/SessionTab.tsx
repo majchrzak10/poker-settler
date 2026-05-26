@@ -93,8 +93,11 @@ export function SessionTab({
         </label>
         <div className="flex items-center gap-3">
           <input
-            type="number"
-            min="1"
+            type="text"
+            inputMode="numeric"
+            pattern="[0-9]*"
+            autoComplete="off"
+            aria-label="Domyślna kwota buy-in w PLN"
             value={buyInInput}
             onChange={handleBuyInChange}
             onBlur={handleBuyInBlur}
@@ -145,7 +148,8 @@ export function SessionTab({
                   </div>
                   <button
                     onClick={() => onRemoveFromSession(sp.playerId)}
-                    className="text-green-900 hover:text-rose-400 transition-colors p-1 shrink-0"
+                    aria-label={`Usuń ${player.name} z sesji`}
+                    className="text-green-900 hover:text-rose-400 transition-colors p-2 shrink-0 min-w-[44px] min-h-[44px] flex items-center justify-center"
                   >
                     <IconX />
                   </button>

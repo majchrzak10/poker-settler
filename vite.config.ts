@@ -6,7 +6,15 @@ export default defineConfig({
   base: './',
   build: {
     outDir: 'dist',
-    sourcemap: true,
+    sourcemap: false,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          supabase: ['@supabase/supabase-js'],
+          react: ['react', 'react-dom'],
+        },
+      },
+    },
   },
   test: {
     globals: false,

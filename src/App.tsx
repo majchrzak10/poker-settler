@@ -815,9 +815,9 @@ export default function App() {
         )}
 
         {cloudBanner && (
-          <div className="px-4 py-2 bg-yellow-900/40 border-b border-yellow-800/50 flex items-start justify-between gap-2 shrink-0">
+          <div className="px-4 py-2 bg-yellow-900/40 border-b border-yellow-800/50 flex items-start justify-between gap-2 shrink-0" role="status" aria-live="polite">
             <p className="text-xs text-yellow-100/90 leading-snug flex-1">{cloudBanner}</p>
-            <button type="button" onClick={() => setCloudBanner(null)} className="text-xs text-yellow-200/80 hover:text-white shrink-0 px-1" aria-label="Zamknij">✕</button>
+            <button type="button" onClick={() => setCloudBanner(null)} className="text-yellow-200/80 hover:text-white shrink-0 min-w-[44px] min-h-[44px] flex items-center justify-center" aria-label="Zamknij komunikat">✕</button>
           </div>
         )}
 

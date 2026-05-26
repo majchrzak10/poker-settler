@@ -168,6 +168,8 @@ export function AuthScreen() {
                 value={name}
                 onChange={(e: ChangeEvent<HTMLInputElement>) => setName(e.target.value)}
                 placeholder="Imię (opcjonalne)"
+                autoComplete="given-name"
+                aria-label="Imię"
                 className="w-full bg-black/40 rounded-xl px-4 py-3 text-sm text-white placeholder-green-700 border border-green-800 focus:outline-none focus:border-rose-600 transition-colors"
               />
             )}
@@ -177,6 +179,9 @@ export function AuthScreen() {
               onChange={(e: ChangeEvent<HTMLInputElement>) => setEmail(e.target.value)}
               placeholder="Email *"
               required
+              autoComplete="email"
+              inputMode="email"
+              aria-label="Email"
               className="w-full bg-black/40 rounded-xl px-4 py-3 text-sm text-white placeholder-green-700 border border-green-800 focus:outline-none focus:border-rose-600 transition-colors"
             />
             <input
@@ -186,6 +191,8 @@ export function AuthScreen() {
               placeholder="Hasło (min. 6 znaków) *"
               required
               minLength={6}
+              autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+              aria-label="Hasło"
               className="w-full bg-black/40 rounded-xl px-4 py-3 text-sm text-white placeholder-green-700 border border-green-800 focus:outline-none focus:border-rose-600 transition-colors"
             />
             {mode === 'register' && (
@@ -196,6 +203,8 @@ export function AuthScreen() {
                 placeholder="Potwierdź hasło *"
                 required
                 minLength={6}
+                autoComplete="new-password"
+                aria-label="Potwierdź hasło"
                 className="w-full bg-black/40 rounded-xl px-4 py-3 text-sm text-white placeholder-green-700 border border-green-800 focus:outline-none focus:border-rose-600 transition-colors"
               />
             )}

@@ -531,9 +531,12 @@ export function useCloudSync({
         }
       });
 
+    // Safety-net poll for the case where the Realtime channel is dead but
+    // events (focus/online/visibility) don't fire. 60s is enough — Realtime
+    // already covers the live case and burns ~10x less battery than 6s.
     const poll = setInterval(() => {
       if (!document.hidden) scheduleRefresh();
-    }, 6000);
+    }, 60000);
 
     const onFocus = () => scheduleRefresh();
     const onOnline = () => scheduleRefresh();

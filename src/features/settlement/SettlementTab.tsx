@@ -207,9 +207,13 @@ export function SettlementTab({
               </div>
               <div className="flex items-center gap-2">
                 <input
-                  type="number"
-                  min="0"
+                  type="text"
+                  inputMode="decimal"
+                  enterKeyHint="done"
+                  autoComplete="off"
+                  pattern="[0-9]*[.,]?[0-9]*"
                   placeholder="0"
+                  aria-label={`Cash-out dla ${players.find(p => p.id === sp.playerId)?.name ?? 'gracza'}`}
                   value={sp.cashOut}
                   onChange={e => onSetCashOut(sp.playerId, e.target.value)}
                   className="flex-1 bg-black/40 border border-green-800 rounded-xl px-4 py-3 text-white text-base font-medium focus:outline-none focus:border-rose-600 transition-colors"
