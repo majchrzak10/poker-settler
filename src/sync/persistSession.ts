@@ -118,22 +118,36 @@ export async function persistSessionSaveCloud(
   return repairedSessionPlayersRows;
 }
 
+export function isSessionConflictError(err: unknown): boolean {
+  const e = err as { message?: string; code?: string } | null;
+  if (!e) return false;
+  return (
+    e.message === 'session_conflict' ||
+    /session_conflict/i.test(e.message || '') ||
+    e.code === 'P0001'
+  );
+}
+
 export async function persistSessionUpdateCloud(
   sessionRow: Row,
   sessionPlayersRows: Row[],
   transferRows: Row[],
   participationRows: Row[],
-  setCloudBanner?: (msg: string) => void
-): Promise<void> {
+  setCloudBanner?: (msg: string) => void,
+  expectedUpdatedAt?: string | null
+): Promise<string | null> {
   const ownerId = sessionRow?.owner_id as string;
   const repairedSessionPlayersRows = await repairSessionPlayersRows(
     ownerId,
     sessionPlayersRows,
     setCloudBanner
   );
-  const args = buildSessionRpcArgs(sessionRow, repairedSessionPlayersRows, transferRows, participationRows);
-  const { error } = await supabase.rpc('update_session_atomic', args);
-  if (!error) return;
+  const args = {
+    ...buildSessionRpcArgs(sessionRow, repairedSessionPlayersRows, transferRows, participationRows),
+    p_expected_updated_at: expectedUpdatedAt ?? null,
+  };
+  const { data, error } = await supabase.rpc('update_session_atomic', args);
+  if (!error) return (data as unknown as string | null) ?? null;
   if (!isRpcMissingError(error)) throw error;
   const { error: uErr } = await supabase
     .from('sessions')
@@ -150,6 +164,7 @@ export async function persistSessionUpdateCloud(
   await insertRows('session_players', repairedSessionPlayersRows);
   await insertRows('transfers', transferRows);
   await insertRows('participations', participationRows);
+  return null;
 }
 
 export async function persistSessionDeleteCloud(

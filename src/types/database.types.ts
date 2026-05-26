@@ -257,6 +257,7 @@ export type Database = {
           owner_id: string
           played_at: string | null
           total_pot: number
+          updated_at: string
         }
         Insert: {
           default_buyin?: number
@@ -264,6 +265,7 @@ export type Database = {
           owner_id: string
           played_at?: string | null
           total_pot?: number
+          updated_at?: string
         }
         Update: {
           default_buyin?: number
@@ -271,6 +273,7 @@ export type Database = {
           owner_id?: string
           played_at?: string | null
           total_pot?: number
+          updated_at?: string
         }
         Relationships: []
       }
@@ -381,8 +384,9 @@ export type Database = {
           p_session_players: Json
           p_total_pot: number
           p_transfers: Json
+          p_expected_updated_at?: string | null
         }
-        Returns: undefined
+        Returns: string | null
       }
     }
     Enums: {

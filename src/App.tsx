@@ -7,6 +7,7 @@ import {
   ONBOARDING_KEY,
 } from './app/keys';
 import {
+  isSessionConflictError,
   persistSessionDeleteCloud,
   persistSessionSaveCloud,
   persistSessionUpdateCloud,
@@ -643,13 +644,30 @@ export default function App() {
           });
         }
       }
-      await persistSessionUpdateCloud(sessionRow, sessionPlayersRows, transferRows, participationRows, setCloudBanner);
+      const newUpdatedAt = await persistSessionUpdateCloud(
+        sessionRow,
+        sessionPlayersRows,
+        transferRows,
+        participationRows,
+        setCloudBanner,
+        prevSnap.updated_at ?? null,
+      );
+      if (newUpdatedAt) {
+        setHistory(prev =>
+          prev.map(s => (s.id === id ? { ...(updated as HistorySession), updated_at: newUpdatedAt } : s)),
+        );
+      }
       void refreshCloudData();
       recordSyncSuccess();
       return null;
     } catch (e) {
       const msg = (e as AppError)?.message || String(e);
       setHistory(prev => prev.map(s => s.id === id ? prevSnap : s));
+      if (isSessionConflictError(e)) {
+        notifyCloudFailure('Sesja została zmieniona na innym urządzeniu. Odśwież historię i spróbuj jeszcze raz.');
+        void refreshCloudData();
+        return 'Sesja została zmieniona w innym miejscu — wczytaj ponownie z chmury.';
+      }
       notifyCloudFailure(msg);
       console.error('updateSession cloud failed:', e);
       return 'Edycja jest zapisana tylko lokalnie. Chmura nie przyjęła zmian — spróbuj ponownie.';

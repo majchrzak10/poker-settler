@@ -101,7 +101,7 @@ export function useCloudSync({
       supabase
         .from('sessions')
         .select(
-          'id, played_at, total_pot, session_players(player_id, player_name, total_buy_in, cash_out, net_balance), transfers(from_name, to_name, amount)'
+          'id, played_at, total_pot, updated_at, session_players(player_id, player_name, total_buy_in, cash_out, net_balance), transfers(from_name, to_name, amount)'
         )
         .eq('owner_id', user.id)
         .order('played_at'),
@@ -178,6 +178,7 @@ export function useCloudSync({
       id: s.id,
       date: s.played_at ?? '',
       totalPot: s.total_pot / 100,
+      updated_at: (s as { updated_at?: string | null }).updated_at ?? undefined,
       players: ((s as { session_players?: unknown[] }).session_players || []).map(
         (sp: unknown) => {
           const row = sp as {

@@ -43,6 +43,8 @@ export interface HistorySession {
   transfers: HistoryTransfer[];
   shared?: boolean;
   sharedNote?: string;
+  /** Cloud row version timestamp for optimistic locking. */
+  updated_at?: string;
   [key: string]: unknown;
 }
 
