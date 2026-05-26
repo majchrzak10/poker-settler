@@ -186,12 +186,13 @@ export function SettlementTab({
 
       <div className="space-y-2">
         <p className="text-xs text-green-200/60 uppercase tracking-wider px-1">Cash Out</p>
-        {sessionPlayers.map(sp => {
+        {sessionPlayers.map((sp, idx) => {
           const player = players.find(p => p.id === sp.playerId);
           if (!player) return null;
           const buyInTotal = getTotalBuyIn(sp);
           const cashOutVal = parseFloat(sp.cashOut);
           const net = isNaN(cashOutVal) ? null : cashOutVal - buyInTotal;
+          const isFirst = idx === 0;
           return (
             <div key={sp.playerId} className="bg-black/30 border border-green-900 rounded-2xl p-4">
               <div className="flex items-center gap-3 mb-3">
@@ -219,6 +220,7 @@ export function SettlementTab({
                   autoComplete="off"
                   pattern="[0-9]*[.,]?[0-9]*"
                   placeholder="0"
+                  autoFocus={isFirst && !sp.cashOut}
                   aria-label={`Cash-out dla ${players.find(p => p.id === sp.playerId)?.name ?? 'gracza'}`}
                   value={sp.cashOut}
                   onChange={e => onSetCashOut(sp.playerId, e.target.value)}

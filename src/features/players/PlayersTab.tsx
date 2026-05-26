@@ -150,10 +150,13 @@ export function PlayersTab({
           <div className="space-y-2">
             <input value={draft.name} onChange={(e: ChangeEvent<HTMLInputElement>) => setDraft(d => ({ ...d, name: e.target.value }))}
               placeholder="Imię gracza" autoFocus
+              aria-label={`Imię gracza ${p.name}`}
               className="w-full bg-black/40 rounded-xl px-3 py-2.5 text-sm text-white placeholder-green-700 border border-green-800 focus:outline-none focus:border-rose-600 transition-colors" />
             <div className="space-y-1">
               <input value={draft.phone} onChange={(e: ChangeEvent<HTMLInputElement>) => setDraft(d => ({ ...d, phone: formatPhone(e.target.value) }))}
                 placeholder="Numer telefonu" type="tel" inputMode="numeric" maxLength={11}
+                aria-label={`Numer telefonu gracza ${p.name}`}
+                autoComplete="tel"
                 className={`w-full bg-black/40 rounded-xl px-3 py-2.5 text-sm text-white placeholder-green-700 border transition-colors focus:outline-none ${draftPhoneError ? 'border-red-500' : 'border-green-800 focus:border-rose-600'}`} />
               {draftPhoneError && !isSelfPlayer && <p className="text-xs text-red-400 px-1">Podaj pełny, 9-cyfrowy numer</p>}
               {isSelfPlayer && draftPhoneDigits.length > 0 && draftPhoneDigits.length !== 9 && (
@@ -162,7 +165,8 @@ export function PlayersTab({
             </div>
             <div className="space-y-1">
               <input value={isSelfPlayer ? (accountEmail || '') : draft.email} onChange={(e: ChangeEvent<HTMLInputElement>) => !isSelfPlayer && setDraft(d => ({ ...d, email: e.target.value }))}
-                placeholder="Email znajomego" type="email" autoComplete="off" readOnly={isSelfPlayer}
+                placeholder="Email znajomego" type="email" autoComplete="email" readOnly={isSelfPlayer} inputMode="email"
+                aria-label={`Email gracza ${p.name}`}
                 className={`w-full bg-black/40 rounded-xl px-3 py-2.5 text-sm text-white placeholder-green-700 border transition-colors focus:outline-none ${!isSelfPlayer && draftEmailError ? 'border-red-500' : 'border-green-800 focus:border-rose-600'} ${isSelfPlayer ? 'opacity-80 cursor-not-allowed' : ''}`} />
               {!isSelfPlayer && draftEmailError && <p className="text-xs text-red-400 px-1">Podaj poprawny email</p>}
               {isSelfPlayer && <p className="text-[11px] text-green-200/40 px-1">Email konta jest ustawiany przy rejestracji (jak w Profilu).</p>}
