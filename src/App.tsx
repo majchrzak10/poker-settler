@@ -111,9 +111,9 @@ export default function App() {
   const normalizeEmail = (value: string | null | undefined) => (value || '').trim().toLowerCase();
   const findProfileByEmail = async (emailNorm: string): Promise<string | null> => {
     if (!emailNorm) return null;
-    const { data, error } = await supabase.from('profiles').select('id').eq('email', emailNorm).maybeSingle();
+    const { data, error } = await supabase.rpc('find_profile_id_by_email', { p_email: emailNorm });
     if (error) throw error;
-    return data?.id || null;
+    return (data as string | null) || null;
   };
   const createInviteIfPossible = async (playerId: string, emailNorm: string): Promise<boolean> => {
     if (!emailNorm || emailNorm === normalizeEmail(user?.email)) return false;

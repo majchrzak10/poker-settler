@@ -339,6 +339,14 @@ export type Database = {
           id: string
         }[]
       }
+      find_profile_id_by_email: {
+        Args: { p_email: string }
+        Returns: string | null
+      }
+      profiles_existing_emails: {
+        Args: { p_emails: string[] }
+        Returns: string[]
+      }
       has_reciprocal_link_to: {
         Args: { p_target_owner: string }
         Returns: boolean

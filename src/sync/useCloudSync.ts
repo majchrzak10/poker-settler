@@ -341,11 +341,10 @@ export function useCloudSync({
     if (playerEmails.length === 0) {
       setAccountByEmail({});
     } else {
-      const { data: profileRows } = await supabase
-        .from('profiles')
-        .select('email')
-        .in('email', playerEmails);
-      const existing = new Set((profileRows || []).map(r => normalizeEmail(r.email)));
+      const { data: existingRows } = await supabase.rpc('profiles_existing_emails', {
+        p_emails: playerEmails,
+      });
+      const existing = new Set(((existingRows as string[] | null) || []).map(e => normalizeEmail(e)));
       const map: Record<string, boolean> = {};
       for (const email of playerEmails) map[email] = existing.has(email);
       setAccountByEmail(map);
