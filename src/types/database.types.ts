@@ -326,21 +326,9 @@ export type Database = {
         Args: { p_invite_id: string }
         Returns: undefined
       }
-      complete_friend_player_link: {
-        Args: { p_friend_user_id: string; p_player_id: string }
-        Returns: undefined
-      }
       delete_session_atomic: {
         Args: { p_owner_id: string; p_session_id: string }
         Returns: undefined
-      }
-      find_profile_by_phone: {
-        Args: { p_phone: string }
-        Returns: {
-          display_name: string
-          email: string
-          id: string
-        }[]
       }
       find_profile_id_by_email: {
         Args: { p_email: string }
