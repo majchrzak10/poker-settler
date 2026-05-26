@@ -18,6 +18,12 @@ import {
 import { logClientEvent } from './sync/telemetry';
 import { useCloudSync } from './sync/useCloudSync';
 import type { CloudPlayer } from './sync/useCloudSync';
+import {
+  acceptInvite,
+  cancelInvite,
+  createInviteIfPossible,
+  rejectInvite,
+} from './data/invitesRepo';
 import type {
   HistorySession,
   HistorySessionPlayer,
@@ -110,24 +116,10 @@ export default function App() {
     setCloudBanner(msg);
   };
   const normalizeEmail = (value: string | null | undefined) => (value || '').trim().toLowerCase();
-  const findProfileByEmail = async (emailNorm: string): Promise<string | null> => {
-    if (!emailNorm) return null;
-    const { data, error } = await supabase.rpc('find_profile_id_by_email', { p_email: emailNorm });
-    if (error) throw error;
-    return (data as string | null) || null;
-  };
-  const createInviteIfPossible = async (playerId: string, emailNorm: string): Promise<boolean> => {
-    if (!emailNorm || emailNorm === normalizeEmail(user?.email)) return false;
-    const profileId = await findProfileByEmail(emailNorm);
-    if (!profileId) return false;
-    const { error: inviteErr } = await supabase.from('friend_invites').insert({
-      requester_user_id: user!.id,
-      requester_player_id: playerId,
-      invitee_email: emailNorm,
-    });
-    if (inviteErr && inviteErr.code !== '23505') throw inviteErr;
-    return true;
-  };
+  const createInviteForPlayer = (playerId: string, emailNorm: string) =>
+    user
+      ? createInviteIfPossible(user.id, user.email, playerId, emailNorm)
+      : Promise.resolve(false);
 
   useEffect(() => {
     if (!cloudBanner) return;
@@ -341,7 +333,7 @@ export default function App() {
       }
     } else {
       try {
-        const inviteCreated = await createInviteIfPossible(id, emailNorm);
+        const inviteCreated = await createInviteForPlayer(id, emailNorm);
         if (inviteCreated) {
           setCloudBanner('Gracz dodany. Zaproszenie zostało wysłane i pojawi się u znajomego w Profilu.');
         } else if (emailNorm) {
@@ -400,7 +392,7 @@ export default function App() {
         await reloadAccountProfile();
       }
       try {
-        const inviteCreated = await createInviteIfPossible(id, emailNorm);
+        const inviteCreated = await createInviteForPlayer(id, emailNorm);
         if (inviteCreated && normalizeEmail(prevRow?.email) !== emailNorm) {
           setCloudBanner('Email zaktualizowany. Zaproszenie zostało wysłane.');
         }
@@ -410,29 +402,34 @@ export default function App() {
       void refreshCloudData();
     }
   };
-  const acceptInvite = async (inviteId: string): Promise<string | null> => {
-    const { error } = await supabase.rpc('accept_friend_invite', { p_invite_id: inviteId });
-    if (error) {
-      notifyCloudFailure(error.message);
+  const acceptInviteAction = async (inviteId: string): Promise<string | null> => {
+    try {
+      await acceptInvite(inviteId);
+    } catch (err) {
+      const msg = (err as AppError)?.message || '';
+      notifyCloudFailure(msg);
       return 'Nie udało się zaakceptować zaproszenia.';
     }
     void refreshCloudData();
     return null;
   };
-
-  const rejectInvite = async (inviteId: string): Promise<string | null> => {
-    const { error } = await supabase.rpc('reject_friend_invite', { p_invite_id: inviteId });
-    if (error) {
-      notifyCloudFailure(error.message);
+  const rejectInviteAction = async (inviteId: string): Promise<string | null> => {
+    try {
+      await rejectInvite(inviteId);
+    } catch (err) {
+      const msg = (err as AppError)?.message || '';
+      notifyCloudFailure(msg);
       return 'Nie udało się odrzucić zaproszenia.';
     }
     void refreshCloudData();
     return null;
   };
-  const cancelInvite = async (inviteId: string): Promise<string | null> => {
-    const { error } = await supabase.rpc('cancel_friend_invite', { p_invite_id: inviteId });
-    if (error) {
-      notifyCloudFailure(error.message);
+  const cancelInviteAction = async (inviteId: string): Promise<string | null> => {
+    try {
+      await cancelInvite(inviteId);
+    } catch (err) {
+      const msg = (err as AppError)?.message || '';
+      notifyCloudFailure(msg);
       return 'Nie udało się cofnąć zaproszenia.';
     }
     void refreshCloudData();
@@ -823,11 +820,11 @@ export default function App() {
         )}
 
         <main className="flex-1 main-scroll-pad">
-          {tab === 'players' && <PlayersTab players={players} sessionPlayers={sessionPlayers} onAddPlayer={addPlayer} onUpdatePlayer={updatePlayer} onRemovePlayer={removePlayer} onAddToSession={addToSession} onUnlinkPlayer={unlinkPlayer} currentUserId={user.id} accountByEmail={accountByEmail} outgoingInviteMetaByEmail={outgoingInviteMetaByEmail} accountProfile={accountProfile} accountEmail={(user.email || '').trim().toLowerCase()} pendingInvites={pendingInvites} onAcceptInvite={acceptInvite} onRejectInvite={rejectInvite} />}
+          {tab === 'players' && <PlayersTab players={players} sessionPlayers={sessionPlayers} onAddPlayer={addPlayer} onUpdatePlayer={updatePlayer} onRemovePlayer={removePlayer} onAddToSession={addToSession} onUnlinkPlayer={unlinkPlayer} currentUserId={user.id} accountByEmail={accountByEmail} outgoingInviteMetaByEmail={outgoingInviteMetaByEmail} accountProfile={accountProfile} accountEmail={(user.email || '').trim().toLowerCase()} pendingInvites={pendingInvites} onAcceptInvite={acceptInviteAction} onRejectInvite={rejectInviteAction} />}
           {tab === 'session' && <SessionTab players={players} sessionPlayers={sessionPlayers} defaultBuyIn={defaultBuyIn} totalPot={totalPot} autoAddMeToSession={autoAddMeToSession} onToggleAutoAddMe={setAutoAddMeToSession} onDefaultBuyInChange={setDefaultBuyIn} onAddBuyIn={addBuyIn} onRemoveBuyIn={removeBuyIn} onRemoveFromSession={removeFromSession} onAddToSession={addToSession} onGoToSettlement={() => setTab('settlement')} />}
           {tab === 'settlement' && <SettlementTab players={players} sessionPlayers={sessionPlayers} transactions={transactions} settled={settled} totalPot={totalPot} onSetCashOut={setCashOut} onCalculate={handleCalculate} onResetSession={resetSession} onSaveAndFinish={saveAndFinishSession} savingSession={savingSession} saveStatus={saveStatus} />}
           {tab === 'history' && <HistoryTab history={combinedHistory} onUpdateSession={updateSession} onDeleteSession={deleteSession} failedSyncCount={failedCloudSaves.length} failedSessionIds={failedCloudSaves.map(x => x.sessionId)} onRetryFailedSaves={retryFailedSaves} retryingFailedSaves={retryingFailedSaves} />}
-          {tab === 'profile' && <ProfileView user={user} accountProfile={accountProfile} reloadAccountProfile={reloadAccountProfile} history={combinedHistory} players={players} outgoingInvites={outgoingInvites} onCancelInvite={cancelInvite} onUnlinkPlayer={unlinkPlayer} onSignOut={handleSignOut} onRefresh={handleManualRefresh} onRenameSelf={syncSelfPlayerName} refreshBusy={manualRefreshBusy} syncMeta={syncMeta} onRetrySyncFailed={retryFailedSaves} retryingFailedSaves={retryingFailedSaves} failedCloudSavesCount={failedCloudSaves.length} />}
+          {tab === 'profile' && <ProfileView user={user} accountProfile={accountProfile} reloadAccountProfile={reloadAccountProfile} history={combinedHistory} players={players} outgoingInvites={outgoingInvites} onCancelInvite={cancelInviteAction} onUnlinkPlayer={unlinkPlayer} onSignOut={handleSignOut} onRefresh={handleManualRefresh} onRenameSelf={syncSelfPlayerName} refreshBusy={manualRefreshBusy} syncMeta={syncMeta} onRetrySyncFailed={retryFailedSaves} retryingFailedSaves={retryingFailedSaves} failedCloudSavesCount={failedCloudSaves.length} />}
         </main>
 
         <nav className="nav-safe fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-lg bg-green-950/90 backdrop-blur-sm border-t border-green-900 flex z-10" role="navigation" aria-label="Główne zakładki">
