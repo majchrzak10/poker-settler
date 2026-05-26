@@ -8,6 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "test": "vitest run",
+    "lint": "eslint .",
     "gen:types": "supabase gen types typescript --linked -o src/types/database.types.ts",
     "gen:types:project": "supabase gen types typescript --project-id oatfqrijmwdnkztgvzwx -o src/types/database.types.ts"
   },
@@ -30,12 +31,17 @@
   "devDependencies": {
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
+    "@typescript-eslint/eslint-plugin": "^8.60.0",
+    "@typescript-eslint/parser": "^8.60.0",
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.20",
+    "eslint": "^10.4.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.7.3",
     "vite": "^6.0.7",
+    "vite-plugin-pwa": "^1.3.0",
     "vitest": "^3.0.4"
   }
 }

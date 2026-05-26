@@ -1,5 +1,4 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
-import type { MutableRefObject } from 'react';
 import { plnToCents, settleDebts, formatPln } from './lib/settlement';
 import { supabase } from './lib/supabase';
 import {
@@ -13,10 +12,7 @@ import {
   persistSessionUpdateCloud,
 } from './sync/persistSession';
 import {
-  isFriendLinkRpcMissing,
   sanitizeSyncMeta,
-  summarizeSyncError,
-  formatSyncStamp,
   isSessionPlayerFkError,
 } from './sync/errors';
 import { logClientEvent } from './sync/telemetry';
@@ -537,7 +533,7 @@ export default function App() {
             freshPlayerById = next;
           }
         }
-      } catch (_) {}
+      } catch (err) { console.warn('[poker] refresh players before save failed', err); }
     }
     const sessionPlrs = sessionPlayers.map(sp => {
       const player = freshPlayerById[sp.playerId];
@@ -612,7 +608,7 @@ export default function App() {
             classifier: (err?.code === 'MISSING_SESSION_PLAYERS' || isSessionPlayerFkError(err)) ? 'missing_players' : 'other',
             session_id: sessionId
           });
-        } catch (_) {}
+        } catch { /* telemetry self-fail — intentionally swallow to avoid loop */ }
       }
     }
     setSavingSession(false);
@@ -660,7 +656,7 @@ export default function App() {
             }
             freshPlayerById = next;
           }
-        } catch (_) {}
+        } catch (err) { console.warn('[poker] refresh players before save failed', err); }
       }
       const participationRows = [];
       for (const p of (updated.players ?? [])) {
@@ -741,7 +737,7 @@ export default function App() {
         localStorage.removeItem(`poker_live_push_${prevUserId}`);
         localStorage.removeItem(`poker_live_push_failed_${prevUserId}`);
       }
-    } catch (_) {}
+    } catch (err) { console.warn('[poker] sign-out cleanup failed', err); }
     setTab('session');
   };
   const handleManualRefresh = async () => {

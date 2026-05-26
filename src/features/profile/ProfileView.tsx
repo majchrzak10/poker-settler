@@ -3,7 +3,7 @@ import type { ChangeEvent } from 'react';
 import type { User } from '@supabase/supabase-js';
 import { supabase } from '../../lib/supabase';
 import { pluralPL } from '../../lib/settlement';
-import { formatPhone, formatDate } from '../../lib/format';
+import { formatPhone } from '../../lib/format';
 import { summarizeSyncError } from '../../sync/errors';
 import { IconRefresh, IconPencil } from '../../ui/icons';
 

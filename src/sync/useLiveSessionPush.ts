@@ -65,7 +65,7 @@ export function useLiveSessionPush({
         } else {
           try {
             saveLS(`poker_live_push_failed_${user.id}`, { at: new Date().toISOString() });
-          } catch (_) {}
+          } catch (err) { console.warn('[poker] persist live push failure marker failed', err); }
           recordSyncError(error.message || 'Błąd synchronizacji aktywnej sesji');
         }
       } else {
@@ -74,7 +74,7 @@ export function useLiveSessionPush({
         saveLS(`poker_live_push_${user.id}`, { updated_at: payload.updated_at });
         try {
           localStorage.removeItem(`poker_live_push_failed_${user.id}`);
-        } catch (_) {}
+        } catch { /* localStorage unavailable — harmless */ }
       }
     }, 350);
     return () => clearTimeout(timer);

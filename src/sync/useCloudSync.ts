@@ -178,7 +178,7 @@ export function useCloudSync({
           sessions_error: sessionsRes.error?.message || null,
           sessions_code: sessionsRes.error?.code || null,
         });
-      } catch (_) {}
+      } catch { /* telemetry self-fail */ }
       return;
     }
     setSyncMeta(prev => (prev.lastError ? { ...prev, lastError: null } : prev));
@@ -474,10 +474,10 @@ export function useCloudSync({
       if (reason) {
         try {
           console.warn('sync channel reconnect scheduled:', reason);
-        } catch (_) {}
+        } catch { /* telemetry self-fail */ }
         try {
           void logClientEvent('warn', 'realtime_reconnect', { reason: String(reason) });
-        } catch (_) {}
+        } catch { /* telemetry self-fail */ }
       }
     };
     let channel = supabase

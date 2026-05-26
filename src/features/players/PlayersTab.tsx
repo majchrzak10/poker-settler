@@ -70,14 +70,12 @@ export function PlayersTab({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState({ name: '', phone: '', email: '' });
 
-  const phoneValid = phone.length === 11;
   const phoneError = phone.length > 0 && phone.length < 11;
   const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim().toLowerCase());
   const emailError = email.trim().length > 0 && !emailValid;
   const canSubmit = name.trim().length > 0 && !phoneError && !emailError;
 
   const draftPhoneDigits = draft.phone.replace(/\D/g, '');
-  const draftPhoneValid = draft.phone.length === 11;
   const draftPhoneError = draft.phone.length > 0 && draft.phone.length < 11;
   const draftPhoneOkSelf = draftPhoneDigits.length === 0 || draftPhoneDigits.length === 9;
   const draftEmailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test((draft.email || '').trim().toLowerCase());
