@@ -55,7 +55,9 @@ export default defineConfig({
   },
   test: {
     globals: false,
+    // Per-file: use //@vitest-environment jsdom to opt into DOM in component
+    // tests. Default stays 'node' so pure-logic tests run fast.
     environment: 'node',
-    include: ['src/**/*.test.ts'],
+    include: ['src/**/*.test.{ts,tsx}'],
   },
 });
