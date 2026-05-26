@@ -20,6 +20,13 @@ import { logClientEvent } from './sync/telemetry';
 import { useCloudSync } from './sync/useCloudSync';
 import type { CloudPlayer } from './sync/useCloudSync';
 import { createInviteIfPossible } from './data/invitesRepo';
+import {
+  deletePlayer as deletePlayerRow,
+  insertPlayer,
+  removeFriendPlayerLink,
+  updatePlayerRow,
+} from './data/playersRepo';
+import { updateOrUpsertProfile } from './data/profileRepo';
 import { useFriendInviteActions } from './features/invites/useFriendInviteActions';
 import type {
   HistorySession,
@@ -319,14 +326,19 @@ export default function App() {
     pendingPlayerIdsRef.current.add(id);
     setPlayers(prev => [...prev, row]);
     if (!user) { pendingPlayerIdsRef.current.delete(id); return; }
-    const { error } = await supabase.from('players').insert({ id, owner_id: user.id, name, phone: phone || null, email: emailNorm || null });
+    let insertErr: { code?: string; message?: string } | null = null;
+    try {
+      await insertPlayer({ id, owner_id: user.id, name, phone, email: emailNorm });
+    } catch (e) {
+      insertErr = e as { code?: string; message?: string };
+    }
     pendingPlayerIdsRef.current.delete(id);
-    if (error) {
+    if (insertErr) {
       setPlayers(prev => prev.filter(p => p.id !== id));
-      if (error.code === '23505') {
+      if (insertErr.code === '23505') {
         notifyCloudFailure('Ten numer jest już przypisany do innego gracza na Twojej liście.');
       } else {
-        notifyCloudFailure(error.message);
+        notifyCloudFailure(insertErr.message || '');
       }
     } else {
       try {
@@ -362,30 +374,31 @@ export default function App() {
     }
     setPlayers(prev => prev.map(p => p.id === id ? { ...p, name, phone, email: emailNorm } : p));
     if (!user) return;
-    const { error } = await supabase.from('players').update({ name, phone: phone || null, email: emailNorm || null }).eq('id', id);
-    if (error && prevRow) {
+    let updErr: { code?: string; message?: string } | null = null;
+    try {
+      await updatePlayerRow(id, { name, phone, email: emailNorm });
+    } catch (e) {
+      updErr = e as { code?: string; message?: string };
+    }
+    if (updErr && prevRow) {
       setPlayers(prev => prev.map(p => p.id === id ? prevRow : p));
-      if (error.code === '23505') {
+      if (updErr.code === '23505') {
         notifyCloudFailure('Ten numer jest już przypisany do innego gracza na Twojej liście.');
       } else {
-        notifyCloudFailure(error.message);
+        notifyCloudFailure(updErr.message || '');
       }
-    } else if (!error) {
+    } else if (!updErr) {
       if (prevRow?.linked_user_id === user.id) {
         const digits = normalizePhoneDigits(phone);
-        const emailAccount = normalizeEmail(user.email);
-        const patch = {
-          id: user.id,
-          display_name: (name || '').trim() || 'Gracz',
-          email: emailAccount,
-          phone: digits.length >= 9 ? digits : null,
-        };
-        const { error: profErr } = await supabase.from('profiles').update({
-          display_name: patch.display_name,
-          phone: patch.phone,
-          email: patch.email,
-        }).eq('id', user.id);
-        if (profErr) await supabase.from('profiles').upsert(patch);
+        try {
+          await updateOrUpsertProfile(user.id, {
+            display_name: (name || '').trim() || 'Gracz',
+            email: normalizeEmail(user.email),
+            phone: digits.length >= 9 ? digits : null,
+          });
+        } catch (profileErr) {
+          console.warn('[poker] profile sync after rename failed', profileErr);
+        }
         await reloadAccountProfile();
       }
       try {
@@ -408,14 +421,13 @@ export default function App() {
     const prevRow = players.find(p => p.id === playerId);
     setPlayers(prev => prev.map(p => p.id === playerId ? { ...p, linked_user_id: null } : p));
     if (!user) return;
-    const { error: rpcErr } = await supabase.rpc('remove_friend_player_link', { p_player_id: playerId });
-    if (rpcErr) {
+    try {
+      await removeFriendPlayerLink(playerId);
+    } catch (rpcErr) {
       if (prevRow) setPlayers(prev => prev.map(p => p.id === playerId ? prevRow : p));
-      notifyCloudFailure(rpcErr.message);
-      void refreshCloudData();
-    } else {
-      void refreshCloudData();
+      notifyCloudFailure((rpcErr as AppError)?.message || '');
     }
+    void refreshCloudData();
   };
   const removePlayer = async (id: string) => {
     const prevP = players;
@@ -431,13 +443,13 @@ export default function App() {
     setPlayers(prev => prev.filter(p => p.id !== id));
     setSessionPlayers(prev => prev.filter(sp => sp.playerId !== id));
     if (!user) return;
-    const { error } = await supabase.from('players').delete().eq('id', id);
-    if (error) {
+    try {
+      await deletePlayerRow(id);
+      void refreshCloudData();
+    } catch (e) {
       setPlayers(prevP);
       setSessionPlayers(prevSp);
-      notifyCloudFailure(error.message);
-    } else {
-      void refreshCloudData();
+      notifyCloudFailure((e as AppError)?.message || '');
     }
   };
   const addToSession = (playerId: string) => {

@@ -90,9 +90,26 @@ export function ProfileView({
   const [inviteMsg, setInviteMsg] = useState('');
   const [showSyncDetails, setShowSyncDetails] = useState(false);
 
+  // Keep profiles.email in sync with auth on first mount per user. We deliberately
+  // ignore failures here — the email is best-effort and any RLS / row-missing
+  // error will surface elsewhere (sign-in flow or profile save).
   useEffect(() => {
-    supabase.from('profiles').update({ email: (user.email || '').trim().toLowerCase() }).eq('id', user.id);
-  }, [user.id]);
+    let cancelled = false;
+    const newEmail = (user.email || '').trim().toLowerCase();
+    if (!newEmail) return;
+    (async () => {
+      const { error } = await supabase
+        .from('profiles')
+        .update({ email: newEmail })
+        .eq('id', user.id);
+      if (!cancelled && error) {
+        console.warn('[poker] profiles.email backfill failed', error);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user.id, user.email]);
 
   const selfPlayer = useMemo(
     () => (players || []).find(p => p.linked_user_id === user.id),
