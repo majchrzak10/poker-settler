@@ -18,12 +18,8 @@ import {
 import { logClientEvent } from './sync/telemetry';
 import { useCloudSync } from './sync/useCloudSync';
 import type { CloudPlayer } from './sync/useCloudSync';
-import {
-  acceptInvite,
-  cancelInvite,
-  createInviteIfPossible,
-  rejectInvite,
-} from './data/invitesRepo';
+import { createInviteIfPossible } from './data/invitesRepo';
+import { useFriendInviteActions } from './features/invites/useFriendInviteActions';
 import type {
   HistorySession,
   HistorySessionPlayer,
@@ -402,39 +398,11 @@ export default function App() {
       void refreshCloudData();
     }
   };
-  const acceptInviteAction = async (inviteId: string): Promise<string | null> => {
-    try {
-      await acceptInvite(inviteId);
-    } catch (err) {
-      const msg = (err as AppError)?.message || '';
-      notifyCloudFailure(msg);
-      return 'Nie udało się zaakceptować zaproszenia.';
-    }
-    void refreshCloudData();
-    return null;
-  };
-  const rejectInviteAction = async (inviteId: string): Promise<string | null> => {
-    try {
-      await rejectInvite(inviteId);
-    } catch (err) {
-      const msg = (err as AppError)?.message || '';
-      notifyCloudFailure(msg);
-      return 'Nie udało się odrzucić zaproszenia.';
-    }
-    void refreshCloudData();
-    return null;
-  };
-  const cancelInviteAction = async (inviteId: string): Promise<string | null> => {
-    try {
-      await cancelInvite(inviteId);
-    } catch (err) {
-      const msg = (err as AppError)?.message || '';
-      notifyCloudFailure(msg);
-      return 'Nie udało się cofnąć zaproszenia.';
-    }
-    void refreshCloudData();
-    return null;
-  };
+  const {
+    acceptInvite: acceptInviteAction,
+    rejectInvite: rejectInviteAction,
+    cancelInvite: cancelInviteAction,
+  } = useFriendInviteActions(notifyCloudFailure, refreshCloudData);
   const unlinkPlayer = async (playerId: string): Promise<void> => {
     const prevRow = players.find(p => p.id === playerId);
     setPlayers(prev => prev.map(p => p.id === playerId ? { ...p, linked_user_id: null } : p));
