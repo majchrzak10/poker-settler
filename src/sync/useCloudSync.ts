@@ -1,4 +1,4 @@
-import { MutableRefObject, useCallback, useEffect } from 'react';
+import { Dispatch, MutableRefObject, SetStateAction, useCallback, useEffect } from 'react';
 import type { User } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 import {
@@ -12,10 +12,16 @@ import {
 import { mapSharedParticipations } from '../lib/historyShared';
 import { isMissingLiveSessionTableError } from './errors';
 import { logClientEvent } from './telemetry';
+import type {
+  HistorySession,
+  InviteMeta,
+  OutgoingInvite,
+  PendingInvite,
+  SessionPlayer,
+  SyncMeta,
+} from '../types/domain';
 
 const normalizeEmail = (value: unknown) => ((value as string) || '').trim().toLowerCase();
-
-// ─── App-level state shapes ───────────────────────────────────────────────────
 
 export interface CloudPlayer {
   id: string;
@@ -25,61 +31,24 @@ export interface CloudPlayer {
   linked_user_id: string | null;
 }
 
-interface CloudSessionPlayer {
-  id: string;
-  name: string;
-  phone: string;
-  totalBuyIn: number;
-  cashOut: number;
-  netBalance: number;
-}
-
-interface CloudSession {
-  id: string;
-  date: string;
-  totalPot: number;
-  players: CloudSessionPlayer[];
-  transfers: { from: string; to: string; amount: number }[];
-}
-
-interface SyncMeta {
-  lastError: string | null;
-  [key: string]: unknown;
-}
-
-interface InviteMeta {
-  id: string;
-  status: string;
-  created_at: string;
-  responded_at: string | null;
-}
-
-interface DraftSessionPlayer {
-  playerId: unknown;
-  buyIns: number[];
-  cashOut: string;
-}
-
-// ─── Props ────────────────────────────────────────────────────────────────────
-
 interface UseCloudSyncProps {
   user: User | null;
   players: CloudPlayer[];
   skipLiveSessionCloud: boolean;
-  setSkipLiveSessionCloud: (v: boolean) => void;
+  setSkipLiveSessionCloud: Dispatch<SetStateAction<boolean>>;
   syncChannelNonce: number;
-  setSyncChannelNonce: (fn: (n: number) => number) => void;
-  setSyncMeta: (fn: (prev: SyncMeta) => SyncMeta) => void;
-  setPlayers: (fn: (prev: CloudPlayer[]) => CloudPlayer[]) => void;
-  setHistory: (fn: (prev: CloudSession[]) => CloudSession[]) => void;
-  setSharedHistory: (v: CloudSession[]) => void;
-  setPendingInvites: (v: unknown[]) => void;
-  setOutgoingInvites: (v: unknown[]) => void;
-  setOutgoingInviteMetaByEmail: (v: Record<string, InviteMeta>) => void;
-  setAccountByEmail: (v: Record<string, boolean>) => void;
-  setDefaultBuyIn: (v: number) => void;
-  setSessionPlayers: (v: DraftSessionPlayer[]) => void;
-  sessionPlayersRef: MutableRefObject<DraftSessionPlayer[]>;
+  setSyncChannelNonce: Dispatch<SetStateAction<number>>;
+  setSyncMeta: Dispatch<SetStateAction<SyncMeta>>;
+  setPlayers: Dispatch<SetStateAction<CloudPlayer[]>>;
+  setHistory: Dispatch<SetStateAction<HistorySession[]>>;
+  setSharedHistory: Dispatch<SetStateAction<HistorySession[]>>;
+  setPendingInvites: Dispatch<SetStateAction<PendingInvite[]>>;
+  setOutgoingInvites: Dispatch<SetStateAction<OutgoingInvite[]>>;
+  setOutgoingInviteMetaByEmail: Dispatch<SetStateAction<Record<string, InviteMeta | null>>>;
+  setAccountByEmail: Dispatch<SetStateAction<Record<string, boolean>>>;
+  setDefaultBuyIn: Dispatch<SetStateAction<number>>;
+  setSessionPlayers: Dispatch<SetStateAction<SessionPlayer[]>>;
+  sessionPlayersRef: MutableRefObject<SessionPlayer[]>;
   defaultBuyInRef: MutableRefObject<number>;
   lastDraftHashRef: MutableRefObject<string | null>;
   lastMergedLiveUpdatedAtRef: MutableRefObject<string | null>;
@@ -205,7 +174,7 @@ export function useCloudSync({
     });
 
     type SessionRow = NonNullable<typeof sData>[number];
-    const mapSessionRow = (s: SessionRow): CloudSession => ({
+    const mapSessionRow = (s: SessionRow): HistorySession => ({
       id: s.id,
       date: s.played_at ?? '',
       totalPot: s.total_pot / 100,
@@ -268,7 +237,7 @@ export function useCloudSync({
         if (!trRes.error && trRes.data) sharedTransfers = trRes.data;
       }
       setSharedHistory(
-        mapSharedParticipations(sharedData || [], sharedSessionPlayers, sharedTransfers)
+        mapSharedParticipations(sharedData || [], sharedSessionPlayers, sharedTransfers) as unknown as HistorySession[]
       );
     }
     if (!invitesRes.error) {
@@ -311,9 +280,15 @@ export function useCloudSync({
       }));
       setPendingInvites(enrichedIncoming);
 
-      const outgoing = (invitesData || []).filter(
-        inv => inv.requester_user_id === user.id && inv.status !== 'accepted'
-      );
+      const outgoing = (invitesData || [])
+        .filter(inv => inv.requester_user_id === user.id && inv.status !== 'accepted')
+        .map(inv => ({
+          id: inv.id,
+          invitee_email: inv.invitee_email,
+          status: inv.status as OutgoingInvite['status'],
+          created_at: inv.created_at,
+          responded_at: inv.responded_at || null,
+        }));
       setOutgoingInvites(outgoing);
       const outgoingMap: Record<string, InviteMeta> = {};
       for (const inv of outgoing) {
@@ -387,7 +362,7 @@ export function useCloudSync({
           lastDraftHashRef.current = remoteHash;
           saveLS(`poker_live_push_${user.id}`, { updated_at: remoteTs });
           setDefaultBuyIn(remoteDefaultBuyIn);
-          setSessionPlayers(remoteSessionPlayers as DraftSessionPlayer[]);
+          setSessionPlayers(remoteSessionPlayers as SessionPlayer[]);
         }
       }
     }

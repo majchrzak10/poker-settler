@@ -18,6 +18,17 @@ import {
 import { logClientEvent } from './sync/telemetry';
 import { useCloudSync } from './sync/useCloudSync';
 import type { CloudPlayer } from './sync/useCloudSync';
+import type {
+  HistorySession,
+  HistorySessionPlayer,
+  HistoryTransfer,
+  PendingInvite,
+  OutgoingInvite,
+  InviteMeta,
+  SessionPlayer,
+  SyncMeta,
+  Transaction,
+} from './types/domain';
 import { useLiveSessionPush } from './sync/useLiveSessionPush';
 import {
   loadLS,
@@ -39,13 +50,7 @@ import { TABS, SCREEN_META } from './app/navigation';
 
 // ─── Local types ──────────────────────────────────────────────────────────────
 
-interface SessionPlayer { playerId: string; buyIns: number[]; cashOut: string; }
-interface Transaction { from: string; to: string; amount: number; toPhone?: string; }
-interface HistorySessionPlayer { id: string; name: string; phone?: string; totalBuyIn: number; cashOut: number; netBalance: number; [key: string]: unknown; }
-interface HistoryTransfer { from: string; to: string; amount: number; toPhone?: string; }
-interface HistorySession { id: string; date: string; totalPot: number; players: HistorySessionPlayer[]; transfers: HistoryTransfer[]; shared?: boolean; sharedNote?: string; [key: string]: unknown; }
 interface SaveStatus { type: 'ok' | 'error'; message: string; }
-interface SyncMeta { lastError: string | null; [key: string]: unknown; }
 interface FailedCloudSave { sessionId: string; sessionRow: Record<string, unknown>; sessionPlayersRows: Record<string, unknown>[]; transferRows: Record<string, unknown>[]; participationRows: Record<string, unknown>[]; }
 type AppError = { message?: string; code?: string; details?: string };
 
@@ -60,9 +65,9 @@ export default function App() {
   const [settled, setSettled] = useState(false);
   const [history, setHistory] = useState<HistorySession[]>(() => loadLS('poker_sessions_history', []));
   const [sharedHistory, setSharedHistory] = useState<HistorySession[]>([]);
-  const [pendingInvites, setPendingInvites] = useState<{ id: string; invitee_email: string; created_at: string; requester_user_id: string; requester_player_id: string; requester_name: string; requester_email: string }[]>([]);
-  const [outgoingInvites, setOutgoingInvites] = useState<{ id: string; invitee_email: string; status: 'pending' | 'accepted' | 'rejected' | 'cancelled' }[]>([]);
-  const [outgoingInviteMetaByEmail, setOutgoingInviteMetaByEmail] = useState<Record<string, { id: string; status: 'pending' | 'accepted' | 'rejected' | 'cancelled'; created_at: string; responded_at: string | null } | null>>({});
+  const [pendingInvites, setPendingInvites] = useState<PendingInvite[]>([]);
+  const [outgoingInvites, setOutgoingInvites] = useState<OutgoingInvite[]>([]);
+  const [outgoingInviteMetaByEmail, setOutgoingInviteMetaByEmail] = useState<Record<string, InviteMeta | null>>({});
   const [accountByEmail, setAccountByEmail] = useState<Record<string, boolean>>({});
   const [autoAddMeToSession, setAutoAddMeToSession] = useState<boolean>(() => loadLS('poker_auto_add_me', true));
   const [savingSession, setSavingSession] = useState(false);
@@ -178,7 +183,7 @@ export default function App() {
     setSessionPlayers(prev => prev.filter(sp => playerIds.has(sp.playerId)));
   }, [user?.id, players]);
 
-  const { refreshCloudData } = (useCloudSync as unknown as (props: Record<string, unknown>) => { refreshCloudData: () => Promise<void> })({
+  const { refreshCloudData } = useCloudSync({
     user,
     players,
     skipLiveSessionCloud,
