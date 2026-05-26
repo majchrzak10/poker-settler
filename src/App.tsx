@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, Suspense, lazy } from 'react';
 import { plnToCents, settleDebts, formatPln } from './lib/settlement';
 import { supabase } from './lib/supabase';
 import {
@@ -54,9 +54,17 @@ import { useAccountProfile } from './auth/useAccountProfile';
 import { LoadingScreen, EmailConfirmedScreen, AuthScreen } from './features/auth/AuthScreens';
 import { PlayersTab } from './features/players/PlayersTab';
 import { SessionTab } from './features/session/SessionTab';
-import { SettlementTab } from './features/settlement/SettlementTab';
-import { HistoryTab } from './features/history/HistoryTab';
-import { ProfileView } from './features/profile/ProfileView';
+// History and Settlement only render after user interaction (visit tab / click
+// "Calculate"); lazy-loaded to shave them off the initial bundle.
+const SettlementTab = lazy(() =>
+  import('./features/settlement/SettlementTab').then(m => ({ default: m.SettlementTab })),
+);
+const HistoryTab = lazy(() =>
+  import('./features/history/HistoryTab').then(m => ({ default: m.HistoryTab })),
+);
+const ProfileView = lazy(() =>
+  import('./features/profile/ProfileView').then(m => ({ default: m.ProfileView })),
+);
 import { TABS, SCREEN_META } from './app/navigation';
 
 // ─── Local types ──────────────────────────────────────────────────────────────
@@ -298,6 +306,12 @@ export default function App() {
     }, 1200);
     return () => clearTimeout(timer);
   }, [user?.id, failedCloudSaves.length]);
+
+  const failedSessionIds = useMemo(
+    () => failedCloudSaves.map(x => x.sessionId),
+    [failedCloudSaves],
+  );
+  const goToSettlement = useMemo(() => () => setTab('settlement'), []);
 
   const playerById = useMemo(
     () => Object.fromEntries(players.map(p => [p.id, p])),
@@ -806,11 +820,13 @@ export default function App() {
         )}
 
         <main className="flex-1 main-scroll-pad">
-          {tab === 'players' && <PlayersTab players={players} sessionPlayers={sessionPlayers} onAddPlayer={addPlayer} onUpdatePlayer={updatePlayer} onRemovePlayer={removePlayer} onAddToSession={addToSession} onUnlinkPlayer={unlinkPlayer} currentUserId={user.id} accountByEmail={accountByEmail} outgoingInviteMetaByEmail={outgoingInviteMetaByEmail} accountProfile={accountProfile} accountEmail={(user.email || '').trim().toLowerCase()} pendingInvites={pendingInvites} onAcceptInvite={acceptInviteAction} onRejectInvite={rejectInviteAction} />}
-          {tab === 'session' && <SessionTab players={players} sessionPlayers={sessionPlayers} defaultBuyIn={defaultBuyIn} totalPot={totalPot} autoAddMeToSession={autoAddMeToSession} onToggleAutoAddMe={setAutoAddMeToSession} onDefaultBuyInChange={setDefaultBuyIn} onAddBuyIn={addBuyIn} onRemoveBuyIn={removeBuyIn} onRemoveFromSession={removeFromSession} onAddToSession={addToSession} onGoToSettlement={() => setTab('settlement')} />}
-          {tab === 'settlement' && <SettlementTab players={players} sessionPlayers={sessionPlayers} transactions={transactions} settled={settled} totalPot={totalPot} onSetCashOut={setCashOut} onCalculate={handleCalculate} onResetSession={resetSession} onSaveAndFinish={saveAndFinishSession} savingSession={savingSession} saveStatus={saveStatus} />}
-          {tab === 'history' && <HistoryTab history={combinedHistory} onUpdateSession={updateSession} onDeleteSession={deleteSession} failedSyncCount={failedCloudSaves.length} failedSessionIds={failedCloudSaves.map(x => x.sessionId)} onRetryFailedSaves={retryFailedSaves} retryingFailedSaves={retryingFailedSaves} />}
-          {tab === 'profile' && <ProfileView user={user} accountProfile={accountProfile} reloadAccountProfile={reloadAccountProfile} history={combinedHistory} players={players} outgoingInvites={outgoingInvites} onCancelInvite={cancelInviteAction} onUnlinkPlayer={unlinkPlayer} onSignOut={handleSignOut} onRefresh={handleManualRefresh} onRenameSelf={syncSelfPlayerName} refreshBusy={manualRefreshBusy} syncMeta={syncMeta} onRetrySyncFailed={retryFailedSaves} retryingFailedSaves={retryingFailedSaves} failedCloudSavesCount={failedCloudSaves.length} />}
+          <Suspense fallback={<div className="p-8 text-center text-green-200/50 text-sm">Ładowanie…</div>}>
+            {tab === 'players' && <PlayersTab players={players} sessionPlayers={sessionPlayers} onAddPlayer={addPlayer} onUpdatePlayer={updatePlayer} onRemovePlayer={removePlayer} onAddToSession={addToSession} onUnlinkPlayer={unlinkPlayer} currentUserId={user.id} accountByEmail={accountByEmail} outgoingInviteMetaByEmail={outgoingInviteMetaByEmail} accountProfile={accountProfile} accountEmail={normalizeEmail(user.email)} pendingInvites={pendingInvites} onAcceptInvite={acceptInviteAction} onRejectInvite={rejectInviteAction} />}
+            {tab === 'session' && <SessionTab players={players} sessionPlayers={sessionPlayers} defaultBuyIn={defaultBuyIn} totalPot={totalPot} autoAddMeToSession={autoAddMeToSession} onToggleAutoAddMe={setAutoAddMeToSession} onDefaultBuyInChange={setDefaultBuyIn} onAddBuyIn={addBuyIn} onRemoveBuyIn={removeBuyIn} onRemoveFromSession={removeFromSession} onAddToSession={addToSession} onGoToSettlement={goToSettlement} />}
+            {tab === 'settlement' && <SettlementTab players={players} sessionPlayers={sessionPlayers} transactions={transactions} settled={settled} totalPot={totalPot} onSetCashOut={setCashOut} onCalculate={handleCalculate} onResetSession={resetSession} onSaveAndFinish={saveAndFinishSession} savingSession={savingSession} saveStatus={saveStatus} />}
+            {tab === 'history' && <HistoryTab history={combinedHistory} onUpdateSession={updateSession} onDeleteSession={deleteSession} failedSyncCount={failedCloudSaves.length} failedSessionIds={failedSessionIds} onRetryFailedSaves={retryFailedSaves} retryingFailedSaves={retryingFailedSaves} />}
+            {tab === 'profile' && <ProfileView user={user} accountProfile={accountProfile} reloadAccountProfile={reloadAccountProfile} history={combinedHistory} players={players} outgoingInvites={outgoingInvites} onCancelInvite={cancelInviteAction} onUnlinkPlayer={unlinkPlayer} onSignOut={handleSignOut} onRefresh={handleManualRefresh} onRenameSelf={syncSelfPlayerName} refreshBusy={manualRefreshBusy} syncMeta={syncMeta} onRetrySyncFailed={retryFailedSaves} retryingFailedSaves={retryingFailedSaves} failedCloudSavesCount={failedCloudSaves.length} />}
+          </Suspense>
         </main>
 
         <nav className="nav-safe fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-lg bg-green-950/90 backdrop-blur-sm border-t border-green-900 flex z-10" role="navigation" aria-label="Główne zakładki">

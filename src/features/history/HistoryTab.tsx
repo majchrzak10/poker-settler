@@ -82,10 +82,12 @@ export function HistoryTab({
   }, [history, playerFilter]);
 
   const statsSource = playerFilteredHistory;
-  const filteredHistory = period === null ? statsSource : statsSource.slice(-period);
-  const stats = calculateAllTimeStats(filteredHistory);
-  const sorted = [...playerFilteredHistory].reverse();
-  const drilldownSessions = sorted;
+  const filteredHistory = useMemo(
+    () => (period === null ? statsSource : statsSource.slice(-period)),
+    [statsSource, period],
+  );
+  const stats = useMemo(() => calculateAllTimeStats(filteredHistory), [filteredHistory]);
+  const drilldownSessions = useMemo(() => [...playerFilteredHistory].reverse(), [playerFilteredHistory]);
   const archiveSlice = drilldownSessions.slice(0, archiveLimit);
   const failedSessionIdSet = useMemo(() => new Set(failedSessionIds), [failedSessionIds]);
 
