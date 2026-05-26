@@ -482,7 +482,7 @@ export default function App() {
   const addBuyIn = (playerId: string) => { setSettled(false); setSessionPlayers(prev => prev.map(sp => sp.playerId === playerId ? { ...sp, buyIns: [...sp.buyIns, defaultBuyIn] } : sp)); };
   const removeBuyIn = (playerId: string) => { setSettled(false); setSessionPlayers(prev => prev.map(sp => sp.playerId === playerId && sp.buyIns.length > 1 ? { ...sp, buyIns: sp.buyIns.slice(0, -1) } : sp)); };
   const setCashOut = (playerId: string, value: string) => {
-    const cleaned = value.replace(/[^0-9.]/g, '');
+    const cleaned = value.replace(',', '.').replace(/[^0-9.]/g, '');
     const firstDot = cleaned.indexOf('.');
     const normalized = firstDot === -1
       ? cleaned
