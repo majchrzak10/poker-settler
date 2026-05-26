@@ -31,7 +31,7 @@ interface SessionTabProps {
   autoAddMeToSession: boolean;
   onToggleAutoAddMe: (v: boolean) => void;
   onDefaultBuyInChange: (v: number) => void;
-  onAddBuyIn: (playerId: string) => void;
+  onAddBuyIn: (playerId: string, amount?: number) => void;
   onRemoveBuyIn: (playerId: string) => void;
   onRemoveFromSession: (playerId: string) => void;
   onAddToSession: (playerId: string) => void;
@@ -53,6 +53,8 @@ export function SessionTab({
   onGoToSettlement,
 }: SessionTabProps) {
   const [showAdd, setShowAdd] = useState(false);
+  const [customBuyInOpenFor, setCustomBuyInOpenFor] = useState<string | null>(null);
+  const [customBuyInValue, setCustomBuyInValue] = useState('');
   const [buyInInput, setBuyInInput] = useState(String(defaultBuyIn));
 
   const available = players.filter(p => !sessionPlayers.some(sp => sp.playerId === p.id));
@@ -154,34 +156,99 @@ export function SessionTab({
                     <IconX />
                   </button>
                 </div>
-                <div className="flex items-stretch rounded-xl overflow-hidden border border-green-900 gap-px bg-green-900">
-                  <button
-                    onClick={() => onRemoveBuyIn(sp.playerId)}
-                    disabled={sp.buyIns.length <= 1}
-                    className="w-16 flex items-center justify-center bg-black/50 text-white hover:bg-black/70 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                {(() => {
+                  const allDefault = sp.buyIns.every(b => b === defaultBuyIn);
+                  return (
+                    <div className="flex items-stretch rounded-xl overflow-hidden border border-green-900 gap-px bg-green-900">
+                      <button
+                        onClick={() => onRemoveBuyIn(sp.playerId)}
+                        disabled={sp.buyIns.length <= 1}
+                        aria-label="Cofnij ostatni buy-in"
+                        className="w-16 flex items-center justify-center bg-black/50 text-white hover:bg-black/70 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                      >
+                        <IconMinus />
+                      </button>
+                      <div
+                        className="flex-1 flex flex-col items-center justify-center py-3 bg-black/30"
+                        title={allDefault ? undefined : sp.buyIns.map(b => `${formatPln(b)} PLN`).join(' + ')}
+                      >
+                        {allDefault ? (
+                          <p className="font-bold text-white leading-tight">
+                            {sp.buyIns.length}
+                            <span className="text-green-200/50 font-normal">×</span>{' '}
+                            <span className="text-yellow-400 tabular-nums">
+                              {formatPln(defaultBuyIn)}
+                            </span>{' '}
+                            <span className="text-green-200/50 text-sm font-normal">PLN</span>
+                          </p>
+                        ) : (
+                          <p className="font-bold text-white leading-tight">
+                            <span className="text-yellow-400 tabular-nums">{formatPln(total)}</span>{' '}
+                            <span className="text-green-200/50 text-sm font-normal">PLN</span>
+                            <span className="text-green-200/50 text-xs font-normal"> ({sp.buyIns.length} re-buy)</span>
+                          </p>
+                        )}
+                        <p className="text-xs text-green-200/55 mt-0.5">
+                          {allDefault ? `= ${formatPln(total)} PLN łącznie` : 'kliknij i przytrzymaj aby zobaczyć szczegóły'}
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => onAddBuyIn(sp.playerId)}
+                        aria-label={`Dodaj kolejny buy-in (${formatPln(defaultBuyIn)} PLN)`}
+                        className="w-16 flex items-center justify-center bg-rose-800 hover:bg-rose-900 text-white transition-colors"
+                      >
+                        <IconPlus size={18} />
+                      </button>
+                    </div>
+                  );
+                })()}
+                {customBuyInOpenFor === sp.playerId ? (
+                  <form
+                    onSubmit={(e: ChangeEvent<HTMLFormElement>) => {
+                      e.preventDefault();
+                      const amount = parseFloat(customBuyInValue.replace(',', '.'));
+                      if (Number.isFinite(amount) && amount > 0) {
+                        onAddBuyIn(sp.playerId, amount);
+                      }
+                      setCustomBuyInOpenFor(null);
+                      setCustomBuyInValue('');
+                    }}
+                    className="mt-2 flex items-stretch gap-2"
                   >
-                    <IconMinus />
-                  </button>
-                  <div className="flex-1 flex flex-col items-center justify-center py-3 bg-black/30">
-                    <p className="font-bold text-white leading-tight">
-                      {sp.buyIns.length}
-                      <span className="text-green-200/50 font-normal">×</span>{' '}
-                      <span className="text-yellow-400 tabular-nums">
-                        {formatPln(defaultBuyIn)}
-                      </span>{' '}
-                      <span className="text-green-200/50 text-sm font-normal">PLN</span>
-                    </p>
-                    <p className="text-xs text-green-200/55 mt-0.5">
-                      = {formatPln(total)} PLN łącznie
-                    </p>
-                  </div>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      pattern="[0-9]*[.,]?[0-9]*"
+                      value={customBuyInValue}
+                      onChange={(e: ChangeEvent<HTMLInputElement>) => setCustomBuyInValue(e.target.value)}
+                      placeholder="np. 80"
+                      autoFocus
+                      aria-label={`Kwota re-buy w PLN dla ${player.name}`}
+                      className="flex-1 bg-black/40 border border-green-800 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-rose-600"
+                    />
+                    <button
+                      type="submit"
+                      className="px-4 bg-rose-800 hover:bg-rose-900 text-white text-sm font-semibold rounded-xl"
+                    >
+                      Dodaj
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setCustomBuyInOpenFor(null); setCustomBuyInValue(''); }}
+                      className="px-3 bg-black/40 border border-green-900 text-green-200/70 text-sm rounded-xl hover:text-white"
+                    >
+                      Anuluj
+                    </button>
+                  </form>
+                ) : (
                   <button
-                    onClick={() => onAddBuyIn(sp.playerId)}
-                    className="w-16 flex items-center justify-center bg-rose-800 hover:bg-rose-900 text-white transition-colors"
+                    type="button"
+                    onClick={() => { setCustomBuyInOpenFor(sp.playerId); setCustomBuyInValue(''); }}
+                    className="mt-2 w-full text-xs text-green-200/55 hover:text-green-200 transition-colors py-1"
                   >
-                    <IconPlus size={18} />
+                    + re-buy z inną kwotą
                   </button>
-                </div>
+                )}
               </div>
             );
           })
