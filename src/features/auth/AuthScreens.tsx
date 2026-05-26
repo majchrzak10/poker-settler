@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { FormEvent, ChangeEvent } from 'react';
 import { supabase } from '../../lib/supabase';
-import { formatPhone } from '../../lib/format';
+import { formatPhone, normalizeEmail } from '../../lib/format';
 
 export function LoadingScreen() {
   return (
@@ -115,7 +115,7 @@ export function AuthScreen() {
         {
           id: data.user.id,
           display_name: displayName,
-          email: email.trim().toLowerCase(),
+          email: normalizeEmail(email),
           phone: phoneDigits || null,
         },
         { onConflict: 'id' }

@@ -105,14 +105,20 @@ export function SettlementTab({
     ].join('\n');
   };
 
+  const [copyError, setCopyError] = useState(false);
   const copyReport = async () => {
     const report = buildReport();
     try {
+      if (!navigator.clipboard?.writeText) throw new Error('clipboard unavailable');
       await navigator.clipboard.writeText(report);
       setCopied(true);
+      setCopyError(false);
       setTimeout(() => setCopied(false), 2500);
-    } catch {
-      // clipboard unavailable
+    } catch (err) {
+      console.warn('[poker] copyReport failed', err);
+      setCopied(false);
+      setCopyError(true);
+      setTimeout(() => setCopyError(false), 4000);
     }
   };
 
@@ -294,6 +300,20 @@ export function SettlementTab({
           >
             {copied ? <IconCheck /> : <IconShare />} {copied ? 'Skopiowano!' : 'Kopiuj rozliczenie'}
           </button>
+          {copyError && (
+            <p role="alert" className="text-xs text-rose-400 text-center -mt-2">
+              Kopiowanie nie zadziałało. Zaznacz tekst poniżej i skopiuj ręcznie.
+            </p>
+          )}
+          {copyError && (
+            <textarea
+              readOnly
+              value={buildReport()}
+              className="w-full bg-black/40 border border-rose-900 rounded-xl px-3 py-2 text-xs text-green-200 font-mono"
+              rows={Math.min(12, buildReport().split('\n').length)}
+              onFocus={e => e.currentTarget.select()}
+            />
+          )}
           <button
             onClick={onResetSession}
             className="w-full flex items-center justify-center gap-2 bg-rose-950/50 hover:bg-rose-900/50 border border-rose-900/50 rounded-xl py-3.5 text-sm font-semibold text-rose-400 transition-colors"

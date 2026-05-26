@@ -5,6 +5,7 @@ import {
   FAILED_CLOUD_SAVES_KEY,
   SYNC_META_KEY,
   ONBOARDING_KEY,
+  clearAllPokerKeys,
 } from './app/keys';
 import {
   isSessionConflictError,
@@ -47,7 +48,7 @@ import {
   useDebouncedLocalStorage,
   buildDraftHash,
 } from './lib/storage';
-import { getTotalBuyIn, normalizePhoneDigits } from './lib/format';
+import { getTotalBuyIn, normalizeEmail, normalizePhoneDigits } from './lib/format';
 import { useAuth } from './auth/useAuth';
 import { useAccountProfile } from './auth/useAccountProfile';
 import { LoadingScreen, EmailConfirmedScreen, AuthScreen } from './features/auth/AuthScreens';
@@ -119,7 +120,6 @@ export default function App() {
     recordSyncError(msg);
     setCloudBanner(msg);
   };
-  const normalizeEmail = (value: string | null | undefined) => (value || '').trim().toLowerCase();
   const createInviteForPlayer = (playerId: string, emailNorm: string) =>
     user
       ? createInviteIfPossible(user.id, user.email, playerId, emailNorm)
@@ -706,7 +706,6 @@ export default function App() {
     }
   };
   const handleSignOut = async () => {
-    const prevUserId = user?.id;
     await supabase.auth.signOut();
     setPlayers([]);
     setHistory([]);
@@ -726,18 +725,7 @@ export default function App() {
     lastDraftHashRef.current = buildDraftHash(50, []);
     lastMergedLiveUpdatedAtRef.current = null;
     applyingRemoteSessionRef.current = false;
-    try {
-      localStorage.removeItem('poker_players');
-      localStorage.removeItem('poker_session');
-      localStorage.removeItem('poker_default_buyin');
-      localStorage.removeItem('poker_sessions_history');
-      localStorage.removeItem(FAILED_CLOUD_SAVES_KEY);
-      localStorage.removeItem(SYNC_META_KEY);
-      if (prevUserId) {
-        localStorage.removeItem(`poker_live_push_${prevUserId}`);
-        localStorage.removeItem(`poker_live_push_failed_${prevUserId}`);
-      }
-    } catch (err) { console.warn('[poker] sign-out cleanup failed', err); }
+    clearAllPokerKeys();
     setTab('session');
   };
   const handleManualRefresh = async () => {

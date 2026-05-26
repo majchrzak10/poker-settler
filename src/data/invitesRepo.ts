@@ -6,9 +6,7 @@
  * no state, no React.
  */
 import { supabase } from '../lib/supabase';
-
-const normalizeEmail = (value: string | null | undefined) =>
-  (value || '').trim().toLowerCase();
+import { normalizeEmail } from '../lib/format';
 
 /** Look up a profile id by exact email. Returns null when no account exists. */
 export async function findProfileIdByEmail(emailNorm: string): Promise<string | null> {

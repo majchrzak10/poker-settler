@@ -12,6 +12,7 @@ import {
 import { mapSharedParticipations } from '../lib/historyShared';
 import { isMissingLiveSessionTableError } from './errors';
 import { logClientEvent } from './telemetry';
+import { normalizeEmail as normalizeEmailRaw } from '../lib/format';
 import type {
   HistorySession,
   InviteMeta,
@@ -21,7 +22,8 @@ import type {
   SyncMeta,
 } from '../types/domain';
 
-const normalizeEmail = (value: unknown) => ((value as string) || '').trim().toLowerCase();
+const normalizeEmail = (value: unknown) =>
+  normalizeEmailRaw(typeof value === 'string' ? value : value == null ? '' : String(value));
 
 export interface CloudPlayer {
   id: string;
@@ -242,13 +244,13 @@ export function useCloudSync({
       );
     }
     if (!invitesRes.error) {
-      const myEmail = (user.email || '').trim().toLowerCase();
+      const myEmail = normalizeEmailRaw(user.email);
       const incoming = (invitesData || []).filter(
         inv =>
           inv.status === 'pending' &&
           inv.requester_user_id !== user.id &&
           (inv.invitee_user_id === user.id ||
-            (inv.invitee_email || '').trim().toLowerCase() === myEmail)
+            normalizeEmailRaw(inv.invitee_email) === myEmail)
       );
 
       const requesterUserIds = Array.from(
@@ -261,7 +263,7 @@ export function useCloudSync({
           .select('id, display_name, email')
           .in('id', requesterUserIds);
         for (const row of requesterRows || []) {
-          const emailNorm = ((row.email as string) || '').trim().toLowerCase();
+          const emailNorm = normalizeEmailRaw(row.email);
           const name =
             ((row.display_name as string) || '').trim() ||
             emailNorm.split('@')[0] ||

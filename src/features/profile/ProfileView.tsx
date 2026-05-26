@@ -3,7 +3,7 @@ import type { ChangeEvent } from 'react';
 import type { User } from '@supabase/supabase-js';
 import { supabase } from '../../lib/supabase';
 import { pluralPL } from '../../lib/settlement';
-import { formatPhone } from '../../lib/format';
+import { formatPhone, normalizeEmail } from '../../lib/format';
 import { summarizeSyncError } from '../../sync/errors';
 import { IconRefresh, IconPencil } from '../../ui/icons';
 
@@ -95,7 +95,7 @@ export function ProfileView({
   // error will surface elsewhere (sign-in flow or profile save).
   useEffect(() => {
     let cancelled = false;
-    const newEmail = (user.email || '').trim().toLowerCase();
+    const newEmail = normalizeEmail(user.email);
     if (!newEmail) return;
     (async () => {
       const { error } = await supabase
@@ -129,7 +129,7 @@ export function ProfileView({
 
   const buildProfilePayload = (patch: { display_name?: string; phone?: string | null } = {}) => {
     const safeName = (patch.display_name ?? draftName ?? accountProfile?.display_name ?? user.email?.split('@')[0] ?? 'Gracz').trim() || 'Gracz';
-    const safeEmailRaw = (accountProfile?.email ?? user.email ?? '').trim().toLowerCase();
+    const safeEmailRaw = normalizeEmail(accountProfile?.email ?? user.email);
     const safePhoneRaw = patch.phone !== undefined
       ? patch.phone
       : (draftPhone ? draftPhone.replace(/\s/g, '') : (accountProfile?.phone ?? selfPlayer?.phone ?? null));

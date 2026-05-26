@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { ChangeEvent, FormEvent } from 'react';
-import { formatPhone } from '../../lib/format';
+import { formatPhone, normalizeEmail } from '../../lib/format';
 import { IconUserPlus, IconCheck, IconX, IconPlus, IconPencil, IconTrash } from '../../ui/icons';
 import { IncomingInvitesCard } from './IncomingInvitesCard';
 import type { IncomingInvite } from './IncomingInvitesCard';
@@ -71,14 +71,14 @@ export function PlayersTab({
   const [draft, setDraft] = useState({ name: '', phone: '', email: '' });
 
   const phoneError = phone.length > 0 && phone.length < 11;
-  const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim().toLowerCase());
+  const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizeEmail(email));
   const emailError = email.trim().length > 0 && !emailValid;
   const canSubmit = name.trim().length > 0 && !phoneError && !emailError;
 
   const draftPhoneDigits = draft.phone.replace(/\D/g, '');
   const draftPhoneError = draft.phone.length > 0 && draft.phone.length < 11;
   const draftPhoneOkSelf = draftPhoneDigits.length === 0 || draftPhoneDigits.length === 9;
-  const draftEmailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test((draft.email || '').trim().toLowerCase());
+  const draftEmailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizeEmail(draft.email));
   const draftEmailError = (draft.email || '').trim().length > 0 && !draftEmailValid;
   const canSaveDraft = draft.name.trim().length > 0 && !draftPhoneError && !draftEmailError;
 
@@ -87,7 +87,7 @@ export function PlayersTab({
   const handleSubmit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!canSubmit) return;
-    onAddPlayer(name.trim(), phone, email.trim().toLowerCase());
+    onAddPlayer(name.trim(), phone, normalizeEmail(email));
     setName(''); setPhone(''); setEmail('');
   };
 
@@ -102,14 +102,14 @@ export function PlayersTab({
   const cancelEdit = () => { setEditingId(null); setDraft({ name: '', phone: '', email: '' }); };
   const confirmEdit = (id: string, isSelfPlayer: boolean) => {
     if (isSelfPlayer) {
-      const emailNorm = (accountEmail || '').trim().toLowerCase();
+      const emailNorm = normalizeEmail(accountEmail);
       const digits = draft.phone.replace(/\D/g, '');
       if (digits.length > 0 && digits.length !== 9) return;
       if (!draft.name.trim()) return;
       onUpdatePlayer(id, draft.name.trim(), draft.phone, emailNorm);
     } else {
       if (!canSaveDraft) return;
-      onUpdatePlayer(id, draft.name.trim(), draft.phone, draft.email.trim().toLowerCase());
+      onUpdatePlayer(id, draft.name.trim(), draft.phone, normalizeEmail(draft.email));
     }
     cancelEdit();
   };
@@ -121,9 +121,9 @@ export function PlayersTab({
     const displayName = isSelfPlayer ? ((accountProfile?.display_name || '').trim() || p.name) : p.name;
     const displayPhoneRaw = isSelfPlayer ? (accountProfile?.phone ?? p.phone) : p.phone;
     const displayPhone = displayPhoneRaw ? formatPhone(String(displayPhoneRaw)) : 'Brak numeru';
-    const displayEmail = isSelfPlayer ? (accountEmail || '') : ((p.email || '').trim().toLowerCase());
-    const emailNorm = (p.email || '').trim().toLowerCase();
-    const lookupEmail = isSelfPlayer ? (accountEmail || '').trim().toLowerCase() : emailNorm;
+    const displayEmail = isSelfPlayer ? (accountEmail || '') : normalizeEmail(p.email);
+    const emailNorm = normalizeEmail(p.email);
+    const lookupEmail = isSelfPlayer ? normalizeEmail(accountEmail) : emailNorm;
     const hasAccount = lookupEmail ? accountByEmail[lookupEmail] : undefined;
     const inviteMeta = emailNorm ? outgoingInviteMetaByEmail[emailNorm] : null;
     const inviteStatus = inviteMeta?.status || null;

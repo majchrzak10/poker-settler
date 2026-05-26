@@ -20,3 +20,8 @@ export function normalizePhoneDigits(raw: string | null | undefined) {
   if (raw == null) return '';
   return String(raw).replace(/\D/g, '').slice(0, 9);
 }
+
+/** Lowercase + trim e-mail for case-insensitive comparison and DB lookup. */
+export function normalizeEmail(raw: string | null | undefined): string {
+  return (raw || '').trim().toLowerCase();
+}
